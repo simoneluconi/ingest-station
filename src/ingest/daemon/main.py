@@ -306,7 +306,7 @@ class Daemon:
             share_root=share.dest_root(self.settings["share"]), index=self.index,
             source={"label": src.volume.label, "model": src.disk.model,
                     "serial": src.disk.serial, "kind": "disk",
-                    "name": devices.describe(src.disk)},
+                    "name": devices.describe(src.disk), "brand": src.scan.brand},
             schema=self.settings["folder_schema"], report=report, decide=decide,
             ensure_share=ensure_share, cancel=src.cancel,
             verify_mbps=self.settings["stats"]["verify_mbps"])

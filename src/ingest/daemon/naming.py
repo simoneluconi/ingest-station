@@ -45,11 +45,38 @@ def sanitize_relpath(rel: str) -> str:
     return "/".join(sanitize(p) for p in parts if p != "..")
 
 
-def source_label(label: str | None, model: str | None, fallback: str = "Source") -> str:
-    """Folder label: volume label if meaningful, else the device model."""
-    for cand in (label, model):
+GENERIC_NAMES = {"NO NAME", "UNTITLED", "NONAME", "USB STORAGE", "MASSSTORAGECLASS",
+                 "MASS STORAGE", "GENERIC", "SD/MMC", "CF", "MS", "XD", "SD", "MICROSD",
+                 "CARD READER", "STORAGE DEVICE", "USB DISK", "FLASH DISK", "DISK"}
+
+# DCIM sub-folder suffixes written by cameras (DCF standard: 3 digits + 5 chars)
+DCIM_BRANDS = {"CANON": "Canon", "NIKON": "Nikon", "MSDCF": "Sony", "_FUJI": "Fujifilm",
+               "OLYMP": "Olympus", "OMSYS": "OM_System", "_PANA": "Panasonic",
+               "PANA": "Panasonic", "GOPRO": "GoPro", "LEICA": "Leica", "RICOH": "Ricoh",
+               "PENTX": "Pentax", "HASBL": "Hasselblad", "SIGMA": "Sigma", "APPLE": "Apple",
+               "INSTA": "Insta360", "EOS5D": "Canon", "EOSR5": "Canon"}
+
+
+def dcim_brand(dcim_dirs: list[str]) -> str:
+    """Camera brand from the DCIM sub-folder names (100CANON, 100MSDCF...)."""
+    for d in dcim_dirs:
+        up = d.upper()
+        if up.startswith("DJI"):
+            return "DJI"
+        if len(up) == 8 and up[:3].isdigit():
+            brand = DCIM_BRANDS.get(up[3:])
+            if brand:
+                return brand
+    return ""
+
+
+def source_label(label: str | None, model: str | None, fallback: str = "Card",
+                 hint: str = "") -> str:
+    """Folder label: the volume label if meaningful, else the camera brand
+    guessed from DCIM, else the device model unless it is generic."""
+    for cand in (label, hint, model):
         cand = (cand or "").strip()
-        if cand and cand.upper() not in ("NO NAME", "UNTITLED", "EOS_DIGITAL_"):
+        if cand and cand.upper() not in GENERIC_NAMES:
             return sanitize(cand).replace(" ", "_")
     return fallback
 

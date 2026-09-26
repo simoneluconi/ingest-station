@@ -10,6 +10,7 @@ the share: a file deleted from the share is still "already imported";
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -159,11 +160,19 @@ class Index:
 
     # -- backup ----------------------------------------------------------
     def backup_to(self, dest: str) -> None:
-        """Consistent copy of the database (SQLite online backup)."""
-        tmp = dest + ".tmp"
-        target = sqlite3.connect(tmp)
+        """Consistent copy of the database. The SQLite backup is made next to
+        the local database, then copied as a plain file: SQLite must never
+        open files on a network share (its locks can hang on SMB/NFS)."""
+        local = self.path + ".backup"
+        target = sqlite3.connect(local)
         try:
             self._conn().backup(target)
         finally:
             target.close()
+        tmp = dest + ".tmp"
+        with open(local, "rb") as fi, open(tmp, "wb") as fo:
+            shutil.copyfileobj(fi, fo, 1 << 20)
+            fo.flush()
+            os.fsync(fo.fileno())
         os.replace(tmp, dest)
+        os.remove(local)

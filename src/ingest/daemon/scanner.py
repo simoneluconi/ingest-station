@@ -39,6 +39,7 @@ class ScanResult:
     known_bytes: int = 0
     previous: list[dict] = field(default_factory=list)   # [{import_id, folder, date, files}]
     seconds: float = 0.0
+    brand: str = ""                                       # camera brand guessed from DCIM
 
     @property
     def new_files(self) -> int:
@@ -58,7 +59,8 @@ class ScanResult:
         return {"files": len(self.files), "bytes": self.total_bytes,
                 "known_files": self.known_files, "known_bytes": self.known_bytes,
                 "new_files": self.new_files, "new_bytes": self.new_bytes,
-                "previous": self.previous, "scan_seconds": round(self.seconds, 1)}
+                "previous": self.previous, "scan_seconds": round(self.seconds, 1),
+                "brand": self.brand}
 
 
 def walk(root: str, cancel: threading.Event | None = None) -> list[Item]:
@@ -95,6 +97,7 @@ def scan(root: str, index: Index, cancel: threading.Event | None = None) -> Scan
     t0 = time.monotonic()
     res = ScanResult()
     items = walk(root, cancel)
+    res.brand = naming.dcim_brand(sysfs.listdir(os.path.join(root, "DCIM")))
     sizes = index.known_sizes()
     fps: list[str] = []
     for it in items:

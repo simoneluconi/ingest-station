@@ -143,7 +143,8 @@ class ImportJob:
                     return False
 
     def _create_folder(self) -> bool:
-        label = naming.source_label(self.source.get("label"), self.source.get("model"))
+        label = naming.source_label(self.source.get("label"), self.source.get("model"),
+                                    hint=self.source.get("brand", ""))
         base = naming.folder_name(dt.datetime.now(), label, self.schema)
         while True:
             try:

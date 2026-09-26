@@ -32,7 +32,14 @@ def test_folder_name_and_label():
     assert naming.folder_name(when, "X", "{year}/{label}") == "2026_X"  # '/' sanitised
     assert naming.folder_name(when, "X", "{bogus}") == "2026-09-26_1405_X"
     assert naming.source_label("NO NAME", "Canon EOS R6") == "Canon_EOS_R6"
-    assert naming.source_label("", "") == "Source"
+    assert naming.source_label("", "") == "Card"
+    assert naming.source_label("", "MassStorageClass", hint="Sony") == "Sony"
+    assert naming.source_label("EOS_DIGITAL", "SD/MMC", hint="Canon") == "EOS_DIGITAL"
+    assert naming.source_label("", "USB Storage") == "Card"
+    assert naming.dcim_brand(["100MSDCF"]) == "Sony"
+    assert naming.dcim_brand(["MISC", "100CANON"]) == "Canon"
+    assert naming.dcim_brand(["DJI_001"]) == "DJI"
+    assert naming.dcim_brand(["100MLT33"]) == ""
     taken = {"a", "a_2"}
     assert naming.unique_folder("a", taken.__contains__) == "a_3"
 
