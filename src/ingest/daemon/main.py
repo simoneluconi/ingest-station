@@ -92,6 +92,7 @@ class Daemon:
         self.ip = ""
         self._dirty = asyncio.Event()
         self._rescan = asyncio.Event()
+        self._share_now = asyncio.Event()
         self._disk_sig: dict[str, tuple] = {}
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -367,6 +368,8 @@ class Daemon:
         self.changed()
 
     async def share_monitor(self) -> None:
+        """Re-check the share every 30 s when online, every 5 s when not,
+        and at once when the network address changes."""
         first = True
         while True:
             if self.active_id is None:
@@ -374,13 +377,19 @@ class Daemon:
                                              write=first)
                 self._set_share(st)
                 first = st["state"] != "online"
-            await asyncio.sleep(SHARE_EVERY)
+            delay = SHARE_EVERY if not first else IP_EVERY
+            try:
+                await asyncio.wait_for(self._share_now.wait(), delay)
+            except asyncio.TimeoutError:
+                pass
+            self._share_now.clear()
 
     async def ip_monitor(self) -> None:
         while True:
             ip = await asyncio.to_thread(local_ip)
             if ip != self.ip:
                 self.ip = ip
+                self._share_now.set()
                 self.changed()
             await asyncio.sleep(IP_EVERY)
 
