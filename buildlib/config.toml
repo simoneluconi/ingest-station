@@ -25,8 +25,11 @@ cmdline = [
   "modprobe.blacklist=dw_dmac_core,dw_dmac_pci",      # quirk: hang on reboot/poweroff
   "block.events_dfl_poll_msecs=1000",                # card readers without media events
   "fbcon=font:TER16x32",                             # readable console from 2 m
-  "panic=10",
+  "usbdelay=1",                                      # short media scan; early.sh waits for the ESP
 ]
+# only for the installed system: reboot instead of the initramfs recovery
+# shell, so GRUB counts the attempt of a slot on trial
+system_cmdline = ["panic=10"]
 # heartbeat (seconds) of the hardware watchdog armed in the initramfs; 0 = off
 watchdog_seconds = 300
 
@@ -40,6 +43,7 @@ boot_tries = 3
 # installed at every boot from the slot's local repository (diskless mode)
 system = [
   "alpine-base",
+  "openssl",        # /init adds it for the modloop signature check
   "python3",
   "tzdata",
   "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs",

@@ -211,10 +211,12 @@ def grub_modules(cfg: dict, fx: Fetcher, packages: dict, efi: bytes) -> dict[str
     return out
 
 
-def kernel_cmdline(cfg: dict) -> str:
+def kernel_cmdline(cfg: dict, watchdog: int) -> str:
     k = cfg["kernel"]
-    return " ".join([f"modules={','.join(k['initramfs_modules'])}", *k["cmdline"],
-                     f"ingest_wdt={k['watchdog_seconds']}"])
+    # the iTCO module can be auto-loaded before early.sh runs, so its
+    # heartbeat is set as a module parameter on the command line
+    wdt = [f"iTCO_wdt.heartbeat={watchdog}", f"ingest_wdt={watchdog}"] if watchdog else []
+    return " ".join([f"modules={','.join(k['initramfs_modules'])}", *k["cmdline"], *wdt])
 
 
 def build_overlay(world: list[str], mtime: int) -> bytes:
@@ -239,9 +241,11 @@ def write(path: str, data: bytes) -> None:
         f.write(data)
 
 
-def fill_template(name: str, cmdline: str) -> bytes:
+def fill_template(name: str, cmdline: str, installer_extra: str = "") -> bytes:
     text = open(os.path.join(BOOT, name), encoding="utf-8").read()
-    return text.replace("@CMDLINE@", cmdline).replace("@VERSION@", __version__).encode()
+    return (text.replace("@CMDLINE@", cmdline).replace("@VERSION@", __version__)
+            .replace(" @INSTALLER_EXTRA@", f" {installer_extra}" if installer_extra else "")
+            .encode())
 
 
 def build_usb(args) -> None:
@@ -276,7 +280,7 @@ def build_usb(args) -> None:
     inst = sum(p.installed_size for p in selected.values())
     say(f"  {len(selected)} packages, {dl / 2**20:.1f} MiB download, {inst / 2**20:.1f} MiB in RAM")
 
-    out = os.path.join(DIST, "usb")
+    out = os.path.join(DIST, "usb-vm" if args.test_vm else "usb")
     slot = os.path.join(out, "slots", "A")
     if os.path.exists(out):
         shutil.rmtree(out)
@@ -307,10 +311,18 @@ def build_usb(args) -> None:
     write(os.path.join(slot, "ingest-initrd.gz"), extra)
     say(f"  ingest-initrd.gz: {len(extra) // 1024} KiB, added modules: "
         + ", ".join(m.rsplit("/", 1)[1] for m in added))
-    cmdline = kernel_cmdline(cfg)
+    installer_extra = ""
+    if args.test_vm:
+        # QEMU test build: console on the serial port, shorter watchdog and
+        # countdown, accept the emulated (removable) eMMC as install target
+        cmdline = kernel_cmdline(cfg, 60).replace(" quiet loglevel=3", "") + " console=ttyS0,115200"
+        installer_extra = "ingest_test_target=mmcblk0 ingest_test_countdown=2 ingest_test_serial"
+    else:
+        cmdline = kernel_cmdline(cfg, cfg["kernel"]["watchdog_seconds"])
     mods = grub_modules(cfg, fx, indexes, efi)
     write(os.path.join(slot, "boot", "BOOTX64.EFI"), efi)
-    write(os.path.join(slot, "boot", "grub.cfg"), fill_template("grub-system.cfg", cmdline))
+    write(os.path.join(slot, "boot", "grub.cfg"), fill_template(
+        "grub-system.cfg", " ".join([cmdline, *cfg["kernel"]["system_cmdline"]])))
     for name, data in mods.items():
         write(os.path.join(slot, "boot", "x86_64-efi", name), data)
     say(f"  GRUB runtime modules: {', '.join(sorted(n for n in mods if n.endswith('.mod')))}")
@@ -337,7 +349,10 @@ def build_usb(args) -> None:
 
     say("[7/7] USB layout")
     write(os.path.join(out, "EFI", "BOOT", "BOOTX64.EFI"), efi)
-    write(os.path.join(out, "boot", "grub", "grub.cfg"), fill_template("grub-installer.cfg", cmdline))
+    # empty marker so that Alpine's boot media scan stops waiting early
+    write(os.path.join(out, "slots", ".boot_repository"), b"")
+    write(os.path.join(out, "boot", "grub", "grub.cfg"), fill_template("grub-installer.cfg", cmdline,
+                                                                     installer_extra))
     for name, data in mods.items():
         write(os.path.join(out, "boot", "grub", "x86_64-efi", name), data)
     write(os.path.join(out, "README.txt"), (
@@ -347,14 +362,17 @@ def build_usb(args) -> None:
 
     total = sum(os.path.getsize(os.path.join(r, n)) for r, _, ns in os.walk(out) for n in ns)
     iso.close()
-    say(f"\nDone in {time.time() - t0:.0f} s: dist/usb/ ({total / 2**20:.0f} MiB), "
+    rel = os.path.relpath(out, ROOT).replace(os.sep, "/")
+    say(f"\nDone in {time.time() - t0:.0f} s: {rel}/ ({total / 2**20:.0f} MiB), "
         f"version {__version__}, Alpine {cfg['alpine']['version']}, kernel {kver}")
-    say("Copy the CONTENT of dist/usb/ to the root of a FAT32 USB stick.")
+    say(f"Copy the CONTENT of {rel}/ to the root of a FAT32 USB stick.")
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Build the Ingest Station USB installer")
     p.add_argument("--offline", action="store_true", help="use only the download cache")
+    p.add_argument("--test-vm", action="store_true",
+                   help="build dist/usb-vm/ for QEMU tests (serial console, test-only options)")
     p.add_argument("--no-gpg", action="store_true",
                    help="allow building when gpg is not installed (SHA256 only)")
     args = p.parse_args()
