@@ -60,12 +60,23 @@ ingest-slot try B --tries 1
 reboot
 ```
 
-Slot B boots without its configuration, nothing confirms it, and the
-watchdog resets the board after 5 minutes (if there is no watchdog, power
-cycle manually).
+Slot B cannot find its configuration, the initramfs gives up, the kernel
+panics and restarts after 10 s.
 
 - [ ] The following boot is on slot A again and `ingest-slot status` shows
       `"try_failed": "B"`. Clear it with `ingest-slot ack`.
+- [ ] `ingest-slot rollback` now refuses to activate the broken slot B
+      (`missing ingest.apkovl.tar.gz`). Repair it with `ingest-slot clone`.
+
+**Watchdog test** (simulates a system that hangs):
+
+```sh
+pkill -9 -f /sbin/watchdog     # stop feeding the hardware watchdog
+```
+
+- [ ] The station resets by itself within about 10 minutes (the Intel TCO
+      watchdog fires on its second timeout: up to 2 x 300 s) and boots
+      normally.
 
 ## 5. Boot time
 

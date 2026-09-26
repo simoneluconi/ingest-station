@@ -27,3 +27,18 @@ Phase 1: build, installer and eMMC boot.
 - `ingest-slot` command: status, trial, rollback, clone, boot confirmation.
 - Console banner with version, slot and IP address; mDNS name
   `ingest.local`; DHCP with optional static address.
+- `build.py --test-vm` and `tests/vm/qemu_vm.py`: smoke tests of the whole
+  boot chain (installer, eMMC boot, A/B, rollback, watchdog) in QEMU.
+
+### Fixed (found in the VM before the first hardware test)
+- Kernel panic during the boot media scan: the slot hook now runs before
+  Alpine's init declares the scan failed.
+- Watchdog auto-loaded with a 30 s heartbeat before the hook: the heartbeat
+  is now a module parameter on the kernel command line.
+- Missing `openssl` package (required by Alpine's init for the modloop
+  signature).
+- Partition nodes disappearing while the kernel re-reads the table during
+  installation.
+- `ingest-watchdog` overriding the initramfs timeout.
+- `mkfs.ext4` zeroing the whole data partition on devices without TRIM.
+- About 4 s per boot spent waiting in the boot media scan.

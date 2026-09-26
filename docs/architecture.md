@@ -50,7 +50,10 @@ Why the slot hook is needed: Alpine's init looks for package repositories
 (`.boot_repository`) up to three levels deep on every mounted device, so with
 two slots on the same partition it would mix the packages of both. Slots are
 stored in `/slots/<X>/apks/<repo>/`, deeper than that search, and the hook
-names the right one explicitly.
+names the right one explicitly. An empty `/slots/.boot_repository` marker
+lets the scan (`nlplug-findfs`) stop as soon as the boot partition appears
+instead of waiting for its timeout (about 4 s saved per boot); the marker is
+never used as a repository because the hook always sets the repositories.
 
 ## eMMC layout (GPT)
 
@@ -81,7 +84,8 @@ trial), `try_failed` (trial ran out of attempts), `data_uuid`.
    `active_slot=<new>` and clears the trial. If the checks do not pass
    within 3 minutes during a trial, it reboots.
 4. If the kernel hangs or cannot reach user space, the hardware watchdog
-   armed by `early.sh` (5 minutes) resets the board; `panic=10` covers
+   armed by `early.sh` (300 s heartbeat, reset on the second expiry) resets
+   the board; `panic=10` covers
    kernel panics.
 5. When the attempts are exhausted, GRUB boots `active_slot` again and sets
    `try_failed`, which the UI reports.

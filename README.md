@@ -57,7 +57,9 @@ package index: Alpine RSA signature; each package: control and data hashes)
 and produces **`dist/usb/`** (about 360 MB). Later builds reuse the cache;
 `--offline` builds without network access.
 
-Run the tests with `.venv\Scripts\python -m pytest`.
+Run the tests with `.venv\Scripts\python -m pytest`. The boot chain can
+also be smoke-tested in a QEMU virtual machine, see
+[docs/vm-testing.md](docs/vm-testing.md).
 
 ## 3. Create the USB stick and install
 
@@ -146,7 +148,7 @@ settings (and, for now, with `ingest-slot rollback` on the console).
 | Monitor does not wake up after standby | Console blanking and display power saving are disabled (`consoleblank=0`); the GUI never blanks the screen. |
 | eMMC read-only | Probably worn out. The installer checks the `ro`/`force_ro` flags and does a write/read-back test, then stops with a clear message instead of failing half way. |
 | Wrong disk | No fixed device names are used: the target is the only non-removable disk with `device/type == MMC`, excluding `mmcblk*boot0/boot1/rpmb` and the USB stick. Partitions are referenced by UUID only. |
-| The station hangs during boot | A hardware watchdog (Intel TCO) is armed in the initramfs: after 5 minutes without a healthy system the station resets, and GRUB counts the attempt of a slot on trial. |
+| The station hangs during boot | A hardware watchdog (Intel TCO) is armed in the initramfs and then fed by the `ingest-watchdog` service: if the system hangs, the board resets within about 10 minutes (the TCO fires on its second 300 s timeout) and GRUB counts the attempt of a slot on trial. A kernel panic reboots after 10 s. |
 
 Useful console commands (tty2, `Alt+F2`, login `root`): `ingest-slot status`,
 `dmesg | grep ingest`, `cat /data/log/boot.log`, `logread`.
