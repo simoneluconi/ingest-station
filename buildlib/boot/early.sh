@@ -31,18 +31,25 @@ ingest_log() {
 
 ingest_arm_watchdog() {
 	[ "$ingest_wdt" -gt 0 ] 2>/dev/null || return 0
+	# timeouts come from the command line (wdat_wdt.timeout=, iTCO_wdt.heartbeat=)
+	modprobe -q wdat_wdt
 	modprobe -q lpc_ich
-	modprobe -q iTCO_wdt heartbeat="$ingest_wdt" || { ingest_log "no iTCO watchdog"; return 0; }
+	modprobe -q iTCO_wdt
 	_t=$(cat /sys/class/watchdog/watchdog0/timeout 2>/dev/null)
-	# the driver silently falls back to 30 s on an out-of-range heartbeat:
-	# that would reset us in the middle of the package install
+	if [ -z "$_t" ]; then
+		ingest_log "no hardware watchdog"
+		return 0
+	fi
+	# drivers silently fall back to their default (e.g. 30 s) on an
+	# out-of-range value: that would reset us during the package install
 	if [ "$_t" != "$ingest_wdt" ]; then
 		ingest_log "watchdog timeout is '$_t', not arming"
 		return 0
 	fi
 	# any byte but 'V' starts the timer; closing without the magic
 	# character leaves it running until the ingest-watchdog service takes over
-	[ -c /dev/watchdog ] && printf 1 > /dev/watchdog && ingest_log "watchdog armed (${_t}s)"
+	[ -c /dev/watchdog ] && printf 1 > /dev/watchdog &&
+		ingest_log "watchdog armed (${_t}s, $(cat /sys/class/watchdog/watchdog0/identity))"
 }
 
 ingest_find_media() {
@@ -74,6 +81,14 @@ if [ -n "$ingest_slot" ]; then
 			mkdir -p "$_mnt"
 			mount -t vfat -o ro "$_dev" "$_mnt" || ingest_log "cannot mount $_dev"
 		fi
+		# nlplug-findfs leaves mounted every device carrying the /slots marker
+		# (e.g. the installed eMMC when booting the USB installer, or the
+		# stick when booting the eMMC). Unmount them: the modloop service
+		# takes /slots/<X>/modloop-lts from the first mount that has it.
+		for _m in $(awk '$2 ~ "^/media/" { print $2 }' /proc/mounts); do
+			[ "$_m" = "$_mnt" ] && continue
+			umount "$_m" 2>/dev/null && ingest_log "released $_m"
+		done
 		_slotdir="$_mnt/slots/$ingest_slot"
 		if [ -f "$_slotdir/ingest.apkovl.tar.gz" ]; then
 			KOPT_apkovl="$_slotdir/ingest.apkovl.tar.gz"

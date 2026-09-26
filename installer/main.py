@@ -183,9 +183,16 @@ def wait_for_partitions(log: Log, disk: str, count: int, stable: float = 2.0) ->
 
 
 def unmount_disk(log: Log, disk: str) -> None:
+    """Unmount every partition of `disk`; stop before erasing anything if
+    one of them stays in use."""
     for dev, mnt, _, _ in reversed(blockdev.mounts()):
         if os.path.basename(dev).startswith(disk):
             run(log, ["umount", mnt], check=False)
+    busy = [f"{dev} on {mnt}" for dev, mnt, _, _ in blockdev.mounts()
+            if os.path.basename(dev).startswith(disk)]
+    if busy:
+        raise InstallError("The eMMC is in use and cannot be erased: " + ", ".join(busy)
+                           + ". Nothing was erased; restart and try again.")
 
 
 def write_test(log: Log, disk: str) -> None:
@@ -270,7 +277,7 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
     log("Formatting...")
     run(log, ["mkfs.vfat", "-F", "32", "-n", ESP_LABEL, esp_dev])
     wait_for_partitions(log, disk, 2, stable=0.5)
-    run(log, ["mkfs.ext4", "-F", "-q", "-L", DATA_LABEL, "-m", "0", data_dev])
+    run(log, ["mkfs.ext4", "-F", "-q", "-L", DATA_LABEL, "-m", "0", "-E", "nodiscard", data_dev])
     data_uuid = blkid_uuid(data_dev)
     log(f"ESP UUID {blkid_uuid(esp_dev)}, data UUID {data_uuid}", screen=False)
 
@@ -278,12 +285,7 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
     run(log, ["mount", "-t", "vfat", esp_dev, ESP_MNT])
     try:
         copy_tree(log, src_slot, os.path.join(ESP_MNT, "slots", "A"))
-        boot = os.path.join(src_slot, "boot")
-        copy_file(os.path.join(boot, "BOOTX64.EFI"), os.path.join(ESP_MNT, "EFI", "BOOT", "BOOTX64.EFI"))
-        copy_file(os.path.join(boot, "grub.cfg"), os.path.join(ESP_MNT, "boot", "grub", "grub.cfg"))
-        for mod in sysfs.listdir(os.path.join(boot, "x86_64-efi")):
-            copy_file(os.path.join(boot, "x86_64-efi", mod),
-                      os.path.join(ESP_MNT, "boot", "grub", "x86_64-efi", mod))
+        slots.install_bootloader(src_slot, ESP_MNT)
         # empty marker: lets Alpine's boot media scan (nlplug-findfs) finish
         # at once instead of waiting for its timeout (~4 s per boot)
         open(os.path.join(ESP_MNT, "slots", ".boot_repository"), "wb").close()
