@@ -31,7 +31,7 @@ import zlib
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WORK = os.path.join(ROOT, "work", "vm")
 QEMU_DIR = r"C:\Program Files\qemu"
-SERIAL_PORT, MONITOR_PORT = 4445, 4444
+SERIAL_PORT, MONITOR_PORT, SSH_PORT = 4445, 4444, 2222
 LOG = os.path.join(WORK, "serial.log")
 EMMC = os.path.join(WORK, "emmc.qcow2")
 VARS = os.path.join(WORK, "ovmf-vars.fd")
@@ -59,7 +59,7 @@ def start(args) -> int:
         # `qemu_vm.py stop` (monitor quit flushes), never by killing QEMU
         "-drive", f"if=none,id=emmc,format=qcow2,file={EMMC}",
         "-device", "qemu-xhci,id=xhci",
-        "-netdev", "user,id=n0", "-device", "e1000,netdev=n0",
+        "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{SSH_PORT}-:22", "-device", "e1000,netdev=n0",
         "-global", "ICH9-LPC.noreboot=off",
         "-chardev", f"socket,id=ser0,host=127.0.0.1,port={SERIAL_PORT},server=on,wait=off,logfile={LOG}",
         "-serial", "chardev:ser0",
