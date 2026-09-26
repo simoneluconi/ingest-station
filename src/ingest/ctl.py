@@ -64,6 +64,11 @@ def print_state(st: dict) -> None:
         print_progress(a)
     if st.get("decision"):
         print(f"  PAUSED: {st['decision']['error']}  (ingestctl retry | ingestctl giveup)")
+    r = st.get("last_result")
+    if r:
+        print(f"Last result: {r['status'].upper()}  {r['name']}: {r['files']} files "
+              f"{human(r['bytes'])} -> {r['folder']}{'  ' + r['error'] if r['error'] else ''}"
+              f"  (ingestctl dismiss)")
 
 
 def print_progress(a: dict, end: str = "\n") -> None:
@@ -89,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_parser(name).add_argument("source", nargs="?", default="")
     sub.add_parser("retry", help="retry after a pause")
     sub.add_parser("giveup", help="cancel a paused import")
+    sub.add_parser("dismiss", help="clear the last result")
     sh = sub.add_parser("share", help="destination settings")
     ssub = sh.add_subparsers(dest="action", required=True)
     s_set = ssub.add_parser("set")
@@ -134,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
                 c.call("retry")
             elif a.cmd == "giveup":
                 c.call("decide", choice="cancel")
+            elif a.cmd == "dismiss":
+                c.call("dismiss")
             elif a.cmd == "share":
                 if a.action == "set":
                     changes = {k: v for k, v in {"type": a.type, "server": a.server,

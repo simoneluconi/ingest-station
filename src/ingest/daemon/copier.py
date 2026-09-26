@@ -42,6 +42,23 @@ class Cancelled(Exception):
     pass
 
 
+# errno values meaning "the network share is gone"
+_SHARE_GONE = {5, 11, 110, 112, 113, 107, 116, 103, 104}  # EIO EAGAIN ETIMEDOUT EHOSTDOWN
+#                                                         EHOSTUNREACH ENOTCONN ESTALE
+#                                                         ECONNABORTED ECONNRESET
+
+
+def dest_message(action: str, rel: str, e: OSError) -> str:
+    """Human message for a destination failure."""
+    if e.errno in _SHARE_GONE:
+        return f"the share stopped responding ({action} {rel})"
+    if e.errno == 28:
+        return "the share is full"
+    if e.errno in (1, 13, 30):
+        return f"permission denied on the share ({action} {rel})"
+    return f"cannot {action} {rel}: {e.strerror or e}"
+
+
 @dataclass
 class Item:
     src: str          # absolute path on the mounted source (may hold surrogates)
@@ -79,7 +96,7 @@ def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=No
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         fout = open(tmp, "wb", buffering=0)
     except OSError as e:
-        raise DestError(f"cannot create {item.rel}: {e.strerror or e}") from e
+        raise DestError(dest_message("create", item.rel, e)) from e
     try:
         try:
             fin = open(item.src, "rb", buffering=0)
@@ -96,7 +113,7 @@ def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=No
             os.fsync(fout.fileno())
             _fadvise(fout.fileno(), "POSIX_FADV_DONTNEED")
         except OSError as e:
-            raise DestError(f"cannot write {item.rel}: {e.strerror or e}") from e
+            raise DestError(dest_message("write", item.rel, e)) from e
     except BaseException:
         fout.close()
         _remove_quietly(tmp)
@@ -107,7 +124,7 @@ def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=No
         os.replace(tmp, dst)
     except OSError as e:
         _remove_quietly(tmp)
-        raise DestError(f"cannot finish {item.rel}: {e.strerror or e}") from e
+        raise DestError(dest_message("finish", item.rel, e)) from e
     return Result(fp=edges.fingerprint(), xxh128=h.hexdigest() if h else None)
 
 
@@ -193,7 +210,7 @@ def _write_all(fout, mv: memoryview, rel: str) -> None:
             n = fout.write(mv)
             mv = mv[n:]
     except OSError as e:
-        raise DestError(f"write error in {rel}: {e.strerror or e}") from e
+        raise DestError(dest_message("write", rel, e)) from e
 
 
 def _remove_quietly(path: str) -> None:
@@ -235,5 +252,5 @@ def hash_file(path: str, *, progress=None, cancel: threading.Event | None = None
                 if progress:
                     progress(n)
     except OSError as e:
-        raise DestError(f"cannot read back {rel or path}: {e.strerror or e}") from e
+        raise DestError(dest_message("read back", rel or path, e)) from e
     return h.hexdigest()

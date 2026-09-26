@@ -85,6 +85,8 @@ class Daemon:
         self.active: dict | None = None     # progress of the running import
         self.active_id: str | None = None
         self.pending_decision: dict | None = None   # {"error", "event", "choice"}
+        self.last_result: dict | None = None        # outcome of the last import, kept
+                                                    # after the card is removed
         self.share_state: dict = {"state": "unknown", "reason": "checking..."}
         self.subscribers: set[asyncio.StreamWriter] = set()
         self.ip = ""
@@ -107,6 +109,7 @@ class Daemon:
             "active": ({**self.active, "source": self.active_id} if self.active else None),
             "decision": ({"error": self.pending_decision["error"]}
                          if self.pending_decision else None),
+            "last_result": self.last_result,
             "settings": {k: v for k, v in s.items() if k != "share"},
         }
 
@@ -317,6 +320,8 @@ class Daemon:
                           "mbps": round(res.copy_mbps, 1)}
             src.status = "done" if res.status == "done" else "error"
             src.message = ("You can remove the card" if res.status == "done" else res.error)
+            self.last_result = {**src.result, "source": src.id,
+                                "name": devices.describe(src.disk), "time": time.time()}
             if res.status == "done" and res.copy_mbps > 1:
                 st = self.settings["stats"]
                 st["copy_mbps"] = round(0.7 * st["copy_mbps"] + 0.3 * res.copy_mbps, 1)
@@ -346,6 +351,9 @@ class Daemon:
         self.pending_decision = holder
         if holder:
             self.beeper.play("error")
+            if "share" in holder["error"]:
+                self.share_state = {**self.share_state, "state": "offline",
+                                    "reason": holder["error"]}
         self.changed()
 
     def _decide(self, choice: str) -> None:
@@ -394,6 +402,10 @@ class Daemon:
             elif src.id == self.active_id:
                 src.cancel.set()
                 self._decide("cancel")
+            self.changed()
+            return True
+        if cmd == "dismiss":
+            self.last_result = None
             self.changed()
             return True
         if cmd in ("retry", "decide"):
