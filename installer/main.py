@@ -24,7 +24,7 @@ import tty
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ingest import __version__  # noqa: E402
-from ingest.common import blockdev, grubenv, slots, sysfs  # noqa: E402
+from ingest.common import blockdev, efiboot, grubenv, slots, sysfs  # noqa: E402
 
 ESP_MIB = 1536
 ESP_LABEL = "INGEST_ESP"
@@ -310,6 +310,8 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
         raise InstallError("Verification of the installed files failed (worn eMMC?):\n  "
                            + "\n  ".join(problems[:10]))
 
+    register_boot_entry(log, disk)
+
     os.makedirs(DATA_MNT, exist_ok=True)
     run(log, ["mount", "-t", "ext4", data_dev, DATA_MNT])
     try:
@@ -319,6 +321,23 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
             f.write(log.text())
     finally:
         run(log, ["umount", DATA_MNT], check=False)
+
+
+def register_boot_entry(log: Log, disk: str) -> None:
+    """Add an "Ingest Station" UEFI boot entry, first in BootOrder. Not
+    fatal: the firmware can still boot the fallback path."""
+    log("Registering the UEFI boot entry...")
+    if not os.path.isdir("/sys/firmware/efi"):
+        log("warning: not booted in UEFI mode, boot entry not registered")
+        return
+    try:
+        current = run(log, ["efibootmgr"])
+        for num in efiboot.entries_with_label(current):
+            run(log, ["efibootmgr", "--bootnum", num, "--delete-bootnum"])
+        run(log, efiboot.create_command(disk, 1))
+    except InstallError as e:
+        log(f"warning: could not register the UEFI boot entry ({e}); "
+            "the firmware will use \\EFI\\BOOT\\BOOTX64.EFI")
 
 
 def save_log(log: Log, usb_mnt: str | None) -> None:

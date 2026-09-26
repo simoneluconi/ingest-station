@@ -46,7 +46,7 @@ system = [
   "openssl",        # /init adds it for the modloop signature check
   "python3",
   "tzdata",
-  "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs",
+  "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs", "efibootmgr",
   "avahi",
 ]
 
