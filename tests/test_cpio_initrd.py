@@ -21,7 +21,9 @@ def test_cpio_roundtrip():
 def test_patch_init():
     init = 'x\n\t$repoopts -a "$ROOT"/tmp/apkovls\neend $?\n# Setup network\n'
     out = initrd.patch_init(init)
-    assert out.index(". /ingest/early.sh") < out.index("# Setup network")
+    # the hook runs before eend, which would otherwise drop to the recovery shell
+    assert out.index(". /ingest/early.sh") < out.index("eend $ingest_rc") < out.index("# Setup network")
+    assert "eend $?" not in out
     with pytest.raises(initrd.InitrdError):
         initrd.patch_init("something else")
     with pytest.raises(initrd.InitrdError):

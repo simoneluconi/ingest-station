@@ -8,8 +8,11 @@
 #    /slots/<ingest_slot>/ on it. Slots are deeper than Alpine's automatic
 #    .boot_repository search, so the other slot is never picked up.
 #
-# Without ingest_slot= on the command line this file does nothing.
+# Sets ingest_slot_ok=1 when the slot was found; /init then treats the boot
+# media scan as successful. Without ingest_slot= on the command line this
+# file does nothing.
 
+ingest_slot_ok=
 ingest_slot=
 ingest_media=
 ingest_wdt=0
@@ -75,6 +78,12 @@ if [ -n "$ingest_slot" ]; then
 		if [ -f "$_slotdir/ingest.apkovl.tar.gz" ]; then
 			KOPT_apkovl="$_slotdir/ingest.apkovl.tar.gz"
 			ALPINE_REPO="$_slotdir/apks/main,$_slotdir/apks/community"
+			ingest_slot_ok=1
+			# nlplug-findfs listed the /slots marker here; with this file
+			# present /init would move the boot media mount according to
+			# its fstab (e.g. to /media/usb) and break the paths above.
+			# /init regenerates it from ALPINE_REPO.
+			rm -f "$repofile"
 			ingest_log "booting slot $ingest_slot from $_dev"
 		else
 			ingest_log "slot $ingest_slot missing on $_dev"

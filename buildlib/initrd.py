@@ -17,9 +17,17 @@ from . import cpio
 from .squashfs import SquashFS
 
 HOOK_ANCHOR = '\t$repoopts -a "$ROOT"/tmp/apkovls\neend $?\n'
-HOOK = (
-    "\n# ingest-station: slot-aware boot media and early watchdog\n"
+# nlplug-findfs fails when it finds no apkovl or .boot_repository at the
+# places it searches (our slots are deeper on purpose), and eend would then
+# drop to the recovery shell. The hook runs before eend and the scan counts
+# as successful when the hook located the slot.
+HOOK_REPLACEMENT = (
+    '\t$repoopts -a "$ROOT"/tmp/apkovls\n'
+    "ingest_rc=$?\n"
+    "# ingest-station: slot-aware boot media and early watchdog\n"
     "[ -r /ingest/early.sh ] && . /ingest/early.sh\n"
+    '[ -n "$ingest_slot_ok" ] && ingest_rc=0\n'
+    "eend $ingest_rc\n"
 )
 
 
@@ -32,7 +40,7 @@ def patch_init(init_text: str) -> str:
         raise InitrdError(
             "Alpine /init changed: hook anchor not found exactly once; "
             "review buildlib/initrd.py for this Alpine release")
-    return init_text.replace(HOOK_ANCHOR, HOOK_ANCHOR + HOOK, 1)
+    return init_text.replace(HOOK_ANCHOR, HOOK_REPLACEMENT, 1)
 
 
 def module_closure(modules_dep: str, wanted: list[str]) -> list[str]:
