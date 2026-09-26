@@ -1,0 +1,20 @@
+#!/bin/sh
+# Regenerate /etc/issue (console banner) with version, slot and IP address.
+ver=$(cat /opt/ingest/VERSION 2>/dev/null)
+slot=$(sed -n 's/.*ingest_slot=\([^ ]*\).*/\1/p' /proc/cmdline)
+mode=$(sed -n 's/.*ingest_mode=\([^ ]*\).*/\1/p' /proc/cmdline)
+ip=$(ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)
+{
+	echo
+	echo "  Ingest Station ${ver}   slot ${slot:-?}${mode:+   [$mode]}"
+	echo
+	if [ -n "$ip" ]; then
+		echo "  IP address:  $ip   (ingest.local)"
+	else
+		echo "  IP address:  waiting for network..."
+	fi
+	echo
+} > /etc/issue.new && mv /etc/issue.new /etc/issue
+# refresh a login prompt that is already showing
+[ -n "$1" ] && pkill -HUP -f "getty 38400 tty1" 2>/dev/null
+exit 0

@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+# Feed the hardware watchdog armed by the initramfs (see ingest/early.sh).
+# If the system hangs, the watchdog resets it; after a failed update GRUB
+# then counts the attempt and eventually rolls back to the previous slot.
+
+description="Ingest Station hardware watchdog"
+command=/sbin/watchdog
+command_args="-F -T ${WATCHDOG_TIMEOUT:-300} -t 20 /dev/watchdog"
+command_background=yes
+pidfile=/run/ingest-watchdog.pid
+
+depend() {
+	after modules
+}
+
+start_pre() {
+	if [ ! -c /dev/watchdog ]; then
+		ewarn "No hardware watchdog available"
+		return 1
+	fi
+}

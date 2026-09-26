@@ -1,0 +1,6 @@
+# Dell Wyse 3040 quirk: the eMMC host drivers are not loaded automatically.
+sdhci
+sdhci-acpi
+mmc_block
+# PC speaker, used for the status beeps
+pcspkr

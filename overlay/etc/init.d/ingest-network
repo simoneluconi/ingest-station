@@ -1,0 +1,40 @@
+#!/sbin/openrc-run
+# Bring up wired networking: DHCP by default, static address if configured
+# in /data/config/network.env (written by the settings UI):
+#   MODE=static ADDRESS=192.168.1.50/24 GATEWAY=192.168.1.1 DNS="1.1.1.1 8.8.8.8"
+# DHCP runs in the background so it never delays the boot.
+
+description="Ingest Station network"
+
+depend() {
+	provide net
+	after ingest-data
+}
+
+IFACE=eth0
+
+start() {
+	local MODE=dhcp ADDRESS= GATEWAY= DNS=
+	[ -r /data/config/network.env ] && . /data/config/network.env
+	ip link set lo up
+	ebegin "Starting network on $IFACE ($MODE)"
+	ip link set "$IFACE" up || { eend 1; return 1; }
+	if [ "$MODE" = static ] && [ -n "$ADDRESS" ]; then
+		ip addr flush dev "$IFACE"
+		ip addr add "$ADDRESS" dev "$IFACE"
+		[ -n "$GATEWAY" ] && ip route replace default via "$GATEWAY"
+		: > /etc/resolv.conf
+		for d in $DNS; do echo "nameserver $d" >> /etc/resolv.conf; done
+		/usr/local/sbin/ingest-issue
+	else
+		udhcpc -b -R -p /run/udhcpc.$IFACE.pid -i "$IFACE" \
+			-x hostname:ingest -s /usr/local/sbin/ingest-udhcpc
+	fi
+	eend 0
+}
+
+stop() {
+	[ -f /run/udhcpc.$IFACE.pid ] && kill "$(cat /run/udhcpc.$IFACE.pid)" 2>/dev/null
+	ip addr flush dev "$IFACE" 2>/dev/null
+	return 0
+}

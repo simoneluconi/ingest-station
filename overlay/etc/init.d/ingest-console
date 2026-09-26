@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# Show version, slot and IP address on the console (before the GUI starts).
+
+description="Ingest Station console banner"
+
+depend() {
+	after ingest-network
+}
+
+start() {
+	/usr/local/sbin/ingest-issue
+	return 0
+}

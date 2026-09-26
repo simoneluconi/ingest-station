@@ -1,0 +1,11 @@
+# Ingest Station inittab
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+
+# tty1 shows the status banner (and runs the installer in install mode)
+tty1::respawn:/usr/local/sbin/ingest-tty1
+tty2::respawn:/sbin/getty 38400 tty2
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown

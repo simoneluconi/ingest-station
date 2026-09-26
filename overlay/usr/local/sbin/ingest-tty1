@@ -1,0 +1,8 @@
+#!/bin/sh
+# tty1: run the installer once in install mode, then show the banner and a
+# login prompt (root, no password: physical access only).
+if grep -qw ingest_mode=install /proc/cmdline && [ ! -e /run/ingest-install.started ]; then
+	touch /run/ingest-install.started
+	/usr/local/sbin/ingest-install
+fi
+exec /sbin/getty 38400 tty1

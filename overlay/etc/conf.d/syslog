@@ -1,0 +1,2 @@
+# log to a small in-memory ring buffer (read with: logread)
+SYSLOGD_OPTS="-C512"

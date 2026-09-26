@@ -1,0 +1,38 @@
+#!/sbin/openrc-run
+# Mount the persistent ext4 data partition (config, index, logs) on /data.
+# The partition is identified only by the UUID passed on the kernel command
+# line by GRUB (ingest_data=UUID=..., stored in grubenv by the installer).
+
+description="Ingest Station data partition"
+
+depend() {
+	after modules localmount
+	before ingest-network
+}
+
+start() {
+	local uuid dev
+	mkdir -p /data
+	uuid=$(sed -n 's/.*ingest_data=UUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+	if [ -z "$uuid" ]; then
+		ewarn "No data partition on the command line (installer or live boot)"
+		return 0
+	fi
+	ebegin "Mounting data partition"
+	dev=$(findfs "UUID=$uuid" 2>/dev/null)
+	if [ -z "$dev" ]; then
+		eend 1 "data partition UUID=$uuid not found"
+		return 1
+	fi
+	mount -t ext4 -o noatime "$dev" /data || { eend 1; return 1; }
+	mkdir -p /data/config /data/log /data/index /data/keys
+	eend 0
+}
+
+stop() {
+	if mountinfo --quiet /data; then
+		ebegin "Unmounting data partition"
+		umount /data
+		eend $?
+	fi
+}
