@@ -23,9 +23,8 @@ def usb_reader(root, slots):
         (blk / "removable").write_text("1\n")
         (dev / "model").write_text(f"{model}\n")
         (dev / "vendor").write_text("Generic \n")
-        (blk / "device").mkdir()
-        (blk / "device" / "model").write_text(f"{model}\n")
-        (blk / "device" / "vendor").write_text("Generic \n")
+        # like sysfs: block/<disk>/device -> the SCSI device (its name holds the LUN)
+        os.symlink(dev, blk / "device", target_is_directory=True)
         for i, p in enumerate(parts, 1):
             (blk / p).mkdir()
             (blk / p / "partition").write_text(f"{i}\n")
