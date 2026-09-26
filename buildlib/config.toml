@@ -1,0 +1,52 @@
+# Build configuration for the Ingest Station image.
+
+[alpine]
+version = "3.24.2"
+branch = "v3.24"
+arch = "x86_64"
+mirror = "https://dl-cdn.alpinelinux.org/alpine"
+iso_flavor = "standard"
+# Alpine release signing key (Natanael Copa); used to verify the ISO .asc
+gpg_fingerprint = "0482D84022F52DF1C4E7CD43293ACD0907D9495A"
+repos = ["main", "community"]
+
+[kernel]
+# modules loaded by the initramfs before the boot media scan (quirk: the eMMC
+# host drivers are not auto-loaded on the Wyse 3040)
+initramfs_modules = [
+  "loop", "squashfs", "sd-mod", "usb-storage", "vfat", "nls_cp437",
+  "nls_iso8859-1", "ext4", "sdhci", "sdhci-acpi", "mmc_block",
+]
+# extra modules copied from the modloop into ingest-initrd.gz
+extra_initrd_modules = ["iTCO_wdt", "lpc_ich"]
+cmdline = [
+  "quiet", "loglevel=3",
+  "consoleblank=0",                                  # quirk: display does not wake up
+  "modprobe.blacklist=dw_dmac_core,dw_dmac_pci",      # quirk: hang on reboot/poweroff
+  "block.events_dfl_poll_msecs=1000",                # card readers without media events
+  "fbcon=font:TER16x32",                             # readable console from 2 m
+  "panic=10",
+]
+# heartbeat (seconds) of the hardware watchdog armed in the initramfs; 0 = off
+watchdog_seconds = 300
+
+[layout]
+esp_size_mib = 1536
+esp_label = "INGEST_ESP"
+data_label = "ingest-data"
+boot_tries = 3
+
+[packages]
+# installed at every boot from the slot's local repository (diskless mode)
+system = [
+  "alpine-base",
+  "python3",
+  "tzdata",
+  "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs",
+  "avahi",
+]
+
+[grub]
+# modules loaded at runtime from $prefix/x86_64-efi (not embedded in the
+# ISO's BOOTX64.EFI)
+runtime_modules = ["loadenv", "probe"]
