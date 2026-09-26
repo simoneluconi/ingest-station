@@ -1,0 +1,18 @@
+# build outputs and download cache
+/dist/
+/cache/
+/work/
+
+# NEVER commit the update signing key
+/keys/*.key
+/keys/private/
+*.key
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# simulation data
+/sim-data/

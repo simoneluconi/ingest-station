@@ -1,0 +1,7 @@
+# Everything that ends up on the target must keep LF line endings,
+# even when checked out on Windows.
+* text=auto eol=lf
+*.png binary
+*.ttf binary
+*.whl binary
+*.efi binary
