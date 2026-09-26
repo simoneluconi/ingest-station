@@ -27,7 +27,9 @@ start() {
 		for d in $DNS; do echo "nameserver $d" >> /etc/resolv.conf; done
 		/usr/local/sbin/ingest-issue
 	else
-		udhcpc -b -R -p /run/udhcpc.$IFACE.pid -i "$IFACE" \
+		# one quick attempt, then keep trying in the background: the link
+		# often comes up seconds later and must not delay the boot
+		udhcpc -b -t 1 -T 1 -A 3 -R -p /run/udhcpc.$IFACE.pid -i "$IFACE" \
 			-x hostname:ingest -s /usr/local/sbin/ingest-udhcpc
 	fi
 	eend 0

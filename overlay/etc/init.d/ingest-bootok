@@ -5,8 +5,6 @@
 # GRUB can count the attempt and roll back.
 
 description="Ingest Station boot confirmation"
-pidfile=/run/ingest-bootok.pid
-
 depend() {
 	after ingest-data ingest-network ingest-console
 }
@@ -17,11 +15,12 @@ start() {
 		return 0
 	fi
 	ebegin "Confirming boot in the background"
-	start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" 		--exec /usr/local/bin/ingest-slot -- boot-ok --wait "${BOOTOK_TIMEOUT:-180}"
-	eend $?
+	# a one-shot job, not a daemon: OpenRC must not report it as crashed
+	# once it has finished
+	nohup /usr/local/bin/ingest-slot boot-ok --wait "${BOOTOK_TIMEOUT:-180}" >/dev/null 2>&1 &
+	eend 0
 }
 
 stop() {
-	[ -f "$pidfile" ] && start-stop-daemon --stop --pidfile "$pidfile" 2>/dev/null
 	return 0
 }
