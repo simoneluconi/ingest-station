@@ -18,7 +18,9 @@ initramfs_modules = [
   "nls_iso8859-1", "ext4", "sdhci", "sdhci-acpi", "mmc_block",
 ]
 # extra modules copied from the modloop into ingest-initrd.gz
-extra_initrd_modules = ["iTCO_wdt", "lpc_ich"]
+# watchdog drivers: the Wyse 3040 exposes its watchdog through the ACPI WDAT
+# table (wdat_wdt); iTCO_wdt covers other Intel chipsets (and QEMU q35)
+extra_initrd_modules = ["wdat_wdt", "iTCO_wdt", "lpc_ich"]
 cmdline = [
   "quiet", "loglevel=3",
   "consoleblank=0",                                  # quirk: display does not wake up
@@ -26,6 +28,8 @@ cmdline = [
   "block.events_dfl_poll_msecs=1000",                # card readers without media events
   "fbcon=font:TER16x32",                             # readable console from 2 m
   "usbdelay=1",                                      # short media scan; early.sh waits for the ESP
+  "modloop_verify=no",                               # slots are SHA-256 verified at install/update;
+                                                     # the per-boot SHA1 check costs ~4 s
 ]
 # only for the installed system: reboot instead of the initramfs recovery
 # shell, so GRUB counts the attempt of a slot on trial
@@ -48,6 +52,7 @@ system = [
   "tzdata",
   "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs", "efibootmgr",
   "avahi",
+  "openssh-server", # key-only root access for tests and --deploy updates
 ]
 
 [grub]

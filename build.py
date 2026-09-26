@@ -4,8 +4,9 @@ Python: downloads and verifies the official Alpine artifacts, resolves the
 packages from the signed APKINDEX, builds the apkovl and the extra initrd.
 
 Usage:
-    python build.py            build dist/usb/
-    python build.py --offline  use only the download cache
+    python build.py                 build dist/usb/
+    python build.py --offline       use only the download cache
+    python build.py --deploy HOST   build, then update the station at HOST over SSH
 """
 
 from __future__ import annotations
@@ -29,13 +30,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from buildlib import apk, cpio, initrd  # noqa: E402
+from buildlib import apk, cpio, initrd, sshkey  # noqa: E402
 from buildlib.iso9660 import ISO9660  # noqa: E402
 from buildlib.overlay import Overlay  # noqa: E402
 from buildlib.squashfs import SquashFS  # noqa: E402
 from ingest import __version__  # noqa: E402
 
 CACHE = os.path.join(ROOT, "cache")
+SSH_KEY = os.path.join(ROOT, "keys", "private", "ssh_ed25519")
 DIST = os.path.join(ROOT, "dist")
 BOOT = os.path.join(ROOT, "buildlib", "boot")
 
@@ -43,7 +45,8 @@ RUNLEVELS = {
     "sysinit": ["devfs", "dmesg", "mdev", "hwdrivers", "modloop"],
     "boot": ["modules", "sysctl", "hostname", "bootmisc", "syslog", "hwclock",
              "ingest-watchdog", "ingest-data"],
-    "default": ["ingest-network", "ingest-console", "avahi-daemon", "ntpd", "ingest-bootok"],
+    "default": ["ingest-network", "ingest-console", "avahi-daemon", "ntpd", "ingest-sshkeys",
+                "sshd", "ingest-bootok"],
     "shutdown": ["mount-ro", "killprocs", "savecache"],
 }
 TIMEZONE = "Europe/Rome"
@@ -215,13 +218,19 @@ def kernel_cmdline(cfg: dict, watchdog: int) -> str:
     k = cfg["kernel"]
     # the iTCO module can be auto-loaded before early.sh runs, so its
     # heartbeat is set as a module parameter on the command line
-    wdt = [f"iTCO_wdt.heartbeat={watchdog}", f"ingest_wdt={watchdog}"] if watchdog else []
+    wdt = ([f"wdat_wdt.timeout={watchdog}", f"iTCO_wdt.heartbeat={watchdog}",
+            f"ingest_wdt={watchdog}"] if watchdog else [])
     return " ".join([f"modules={','.join(k['initramfs_modules'])}", *k["cmdline"], *wdt])
 
 
 def build_overlay(world: list[str], mtime: int) -> bytes:
     ov = Overlay(mtime=mtime)
     ov.add_tree(os.path.join(ROOT, "overlay"))
+    ov.dir("root", 0o700)
+    ov.dir("root/.ssh", 0o700)
+    ov.file("root/.ssh/authorized_keys",
+            sshkey.authorized_keys(sshkey.ensure_key(SSH_KEY),
+                                   os.path.join(ROOT, "keys", "authorized_keys")), 0o600)
     ov.add_tree(os.path.join(ROOT, "src", "ingest"), "opt/ingest/ingest", lambda p: 0o644)
     ov.add_tree(os.path.join(ROOT, "installer"), "opt/ingest/installer", lambda p: 0o644)
     ov.file("opt/ingest/VERSION", f"{__version__}\n".encode())
@@ -373,6 +382,9 @@ def main() -> int:
     p.add_argument("--offline", action="store_true", help="use only the download cache")
     p.add_argument("--test-vm", action="store_true",
                    help="build dist/usb-vm/ for QEMU tests (serial console, test-only options)")
+    p.add_argument("--deploy", metavar="HOST",
+                   help="after building, send the new system to the station at HOST[:PORT] "
+                        "over SSH (A/B update with automatic rollback)")
     p.add_argument("--no-gpg", action="store_true",
                    help="allow building when gpg is not installed (SHA256 only)")
     args = p.parse_args()
@@ -381,6 +393,16 @@ def main() -> int:
     except (BuildError, apk.VerifyError, initrd.InitrdError) as e:
         say(f"\nBUILD FAILED: {e}")
         return 1
+    if args.deploy:
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import wyse
+        slot = os.path.join(DIST, "usb-vm" if args.test_vm else "usb", "slots", "A")
+        say(f"\nDeploying to {args.deploy}")
+        try:
+            return wyse.deploy(args.deploy, slot)
+        except (wyse.DeployError, OSError, wyse.paramiko.SSHException) as e:
+            say(f"DEPLOY FAILED: {e}")
+            return 1
     return 0
 
 
