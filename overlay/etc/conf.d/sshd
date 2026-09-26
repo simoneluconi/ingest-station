@@ -1,0 +1,3 @@
+# host keys are managed by ingest-sshkeys (persistent on /data)
+sshd_disable_keygen="yes"
+rc_need="ingest-sshkeys"

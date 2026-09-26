@@ -1,0 +1,14 @@
+# Ingest Station: root access on the LAN with SSH keys only.
+# Authorised keys: the build key (in the image) and /data/ssh/authorized_keys.
+Port 22
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthorizedKeysFile .ssh/authorized_keys /data/ssh/authorized_keys
+# persistent host key, see /etc/init.d/ingest-sshkeys
+HostKey /etc/ssh/ssh_host_ed25519_key
+Subsystem sftp internal-sftp
+PrintMotd no
+UseDNS no
+ClientAliveInterval 30

@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Keep the SSH host key on the data partition so the station's identity
+# does not change at every boot (the root file system lives in RAM).
+# Without a data partition (USB installer) a temporary key is used.
+
+description="Ingest Station SSH host key"
+
+depend() {
+	after ingest-data
+	before sshd
+}
+
+start() {
+	local dir=/run/ssh
+	mountinfo --quiet /data && dir=/data/ssh
+	mkdir -p "$dir"
+	chmod 700 "$dir"
+	if [ ! -f "$dir/ssh_host_ed25519_key" ]; then
+		ebegin "Generating the SSH host key"
+		ssh-keygen -q -t ed25519 -N '' -C ingest -f "$dir/ssh_host_ed25519_key"
+		eend $? || return 1
+	fi
+	ln -sf "$dir/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed25519_key
+	ln -sf "$dir/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
+	return 0
+}
