@@ -19,6 +19,7 @@ import datetime as dt
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ingest import __version__
@@ -28,6 +29,7 @@ from .copier import Cancelled, DestError, Item, SourceError
 from .index import Index
 
 REPORT_EVERY = 0.25
+FINISH_PARALLEL = 3
 
 
 @dataclass
@@ -210,29 +212,69 @@ class ImportJob:
                          verify_mbps=verify_mbps)
 
     def _copy_all(self, items: list[Item], dest: str, records: dict) -> None:
+        """Pipelined copy: file N+1 is written while up to FINISH_PARALLEL
+        previous files are being flushed and renamed. Files are recorded in
+        order, only once durable; after an error everything in flight is
+        settled and the copy restarts from the first unrecorded file."""
         self.phase = "copy"
         want_hash = self.verify != "none"
-        i = 0
-        while i < len(items):
-            if self.cancel.is_set():
-                raise Cancelled()
-            item = items[i]
-            self.current = item.rel
-            try:
-                res = copier.copy_file(item, dest, want_hash=want_hash, progress=self._progress,
-                                       cancel=self.cancel)
-            except DestError as e:
-                # the partial file is removed; retry rewrites it from scratch
-                self.done_bytes = sum(it.size for it in items[:i])
-                if self._pause(str(e)) != "retry" or not self._ensure_share_or_pause():
-                    raise Cancelled() from e
-                continue
-            self.index.add_file(self.import_id, res.fp, item.rel, item.size, item.mtime,
-                                res.xxh128)
-            records[item.rel] = res.xxh128
-            self.done_files += 1
-            i += 1
+        done = 0                                  # items[:done] are recorded
+        with ThreadPoolExecutor(max_workers=FINISH_PARALLEL,
+                                thread_name_prefix="ingest-finish") as pool:
+            while done < len(items):
+                inflight: collections.deque = collections.deque()
+                i = done
+                try:
+                    while i < len(items) or inflight:
+                        # record finished files in order; keep the window bounded
+                        while inflight and (inflight[0][1].done() or i >= len(items)
+                                            or len(inflight) >= FINISH_PARALLEL):
+                            item, fut = inflight[0]
+                            res = fut.result()   # on failure it stays for _settle
+                            inflight.popleft()
+                            self._record(item, res, records)
+                            done += 1
+                        if i >= len(items):
+                            continue
+                        if self.cancel.is_set():
+                            raise Cancelled()
+                        item = items[i]
+                        self.current = item.rel
+                        pending = copier.write_file(item, dest, want_hash=want_hash,
+                                                    progress=self._progress, cancel=self.cancel)
+                        inflight.append((item, pool.submit(copier.finish, pending)))
+                        i += 1
+                except DestError as e:
+                    done += self._settle(inflight, records)
+                    # partial and unrecorded files are rewritten from scratch
+                    self.done_bytes = sum(it.size for it in items[:done])
+                    if self._pause(str(e)) != "retry" or not self._ensure_share_or_pause():
+                        raise Cancelled() from e
+                except BaseException:
+                    self._settle(inflight, records)
+                    raise
         self.current = ""
+
+    def _record(self, item: Item, res, records: dict) -> None:
+        self.index.add_file(self.import_id, res.fp, item.rel, item.size, item.mtime, res.xxh128)
+        records[item.rel] = res.xxh128
+        self.done_files += 1
+
+    def _settle(self, inflight, records: dict) -> int:
+        """Wait for the files in flight; record them in order up to the first
+        failure. Returns how many were recorded."""
+        n, failed = 0, False
+        while inflight:
+            item, fut = inflight.popleft()
+            try:
+                res = fut.result()
+            except Exception:  # noqa: BLE001 - DestError; recopied on retry
+                failed = True
+                continue
+            if not failed:
+                self._record(item, res, records)
+                n += 1
+        return n
 
     def _verify_all(self, dest: str, records: dict) -> float:
         """Read every copy back from the share and compare its xxh128."""

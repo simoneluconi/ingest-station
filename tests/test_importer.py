@@ -61,7 +61,7 @@ def test_share_error_pauses_and_retry_resumes(tmp_path, monkeypatch):
     make_card(tmp_path / "card", CARD)
     idx = Index(str(tmp_path / "idx.db"))
     items = scanner.scan(str(tmp_path / "card"), idx).plan("new")
-    real = copier.copy_file
+    real = copier.write_file
     calls = {"n": 0}
 
     def flaky(item, *a, **kw):
@@ -70,7 +70,7 @@ def test_share_error_pauses_and_retry_resumes(tmp_path, monkeypatch):
             raise copier.DestError("write error: Input/output error")
         return real(item, *a, **kw)
 
-    monkeypatch.setattr(copier, "copy_file", flaky)
+    monkeypatch.setattr(copier, "write_file", flaky)
     decisions = []
     j, reports, share = job(tmp_path, items, index=idx,
                             decide=lambda err: decisions.append(err) or "retry")
@@ -85,7 +85,7 @@ def test_share_error_cancel_keeps_completed_files(tmp_path, monkeypatch):
     make_card(tmp_path / "card", CARD)
     idx = Index(str(tmp_path / "idx.db"))
     items = scanner.scan(str(tmp_path / "card"), idx).plan("new")
-    real = copier.copy_file
+    real = copier.write_file
     calls = {"n": 0}
 
     def flaky(item, *a, **kw):
@@ -94,7 +94,7 @@ def test_share_error_cancel_keeps_completed_files(tmp_path, monkeypatch):
             raise copier.DestError("share offline")
         return real(item, *a, **kw)
 
-    monkeypatch.setattr(copier, "copy_file", flaky)
+    monkeypatch.setattr(copier, "write_file", flaky)
     j, _, _ = job(tmp_path, items, index=idx, decide=lambda err: "cancel")
     res = j.run()
     assert res.status == "cancelled" and res.files == 1
@@ -143,3 +143,38 @@ def test_scanner_skips_system_files(tmp_path):
                                   ".Trashes/y": 5, "DCIM/._A.JPG": 3, "DCIM/.DS_Store": 3})
     items = scanner.walk(str(tmp_path / "card"))
     assert [i.rel for i in items] == ["DCIM/A.JPG"]
+
+
+def test_flush_error_with_files_in_flight(tmp_path, monkeypatch):
+    """The flush of a middle file fails while later files are in flight:
+    only the files before it are recorded, retry restarts from it."""
+    card = {f"DCIM/IMG_{i:04d}.JPG": 50_000 + i for i in range(8)}
+    make_card(tmp_path / "card", card)
+    idx = Index(str(tmp_path / "idx.db"))
+    items = scanner.scan(str(tmp_path / "card"), idx).plan("new")
+    real = copier.finish
+    state = {"failed": False}
+
+    def flaky_finish(p):
+        if p.item.rel.endswith("IMG_0003.JPG") and not state["failed"]:
+            state["failed"] = True
+            p.abort()
+            raise copier.DestError("the share stopped responding")
+        return real(p)
+
+    monkeypatch.setattr(copier, "finish", flaky_finish)
+    seen = []
+
+    def decide(err):
+        seen.append([f["rel_path"] for f in idx.files_of(j.import_id)])
+        return "retry"
+
+    j, _, share = job(tmp_path, items, index=idx, decide=decide)
+    res = j.run()
+    assert res.status == "done" and res.files == 8
+    assert seen == [["DCIM/IMG_0000.JPG", "DCIM/IMG_0001.JPG", "DCIM/IMG_0002.JPG"]]
+    recorded = [f["rel_path"] for f in idx.files_of(j.import_id)]
+    assert recorded == sorted(card)            # in order, no duplicates
+    for rel in card:
+        assert (share / res.folder / rel).read_bytes() == (tmp_path / "card" / rel).read_bytes()
+    assert not list(share.rglob("*" + copier.TMP_SUFFIX))

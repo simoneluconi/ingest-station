@@ -87,9 +87,27 @@ def temp_path(dst: str) -> str:
     return os.path.join(d, f".{name}{TMP_SUFFIX}")
 
 
-def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=None,
-              cancel: threading.Event | None = None, chunk: int = CHUNK) -> Result:
-    """Copy one file; `progress(nbytes)` is called for every chunk written."""
+@dataclass
+class Pending:
+    """A file whose data has been written but not yet made durable."""
+    item: Item
+    fout: object
+    tmp: str
+    dst: str
+    result: Result
+
+    def abort(self) -> None:
+        try:
+            self.fout.close()
+        except OSError:
+            pass
+        _remove_quietly(self.tmp)
+
+
+def write_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=None,
+               cancel: threading.Event | None = None, chunk: int = CHUNK) -> Pending:
+    """First stage: stream the data into the temporary file. The file is
+    not durable until finish() has run."""
     dst = os.path.join(dest_root, *item.rel.split("/"))
     tmp = temp_path(dst)
     try:
@@ -109,23 +127,35 @@ def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=No
             total = _stream(fin, fout, h, edges, progress, cancel, chunk, item.rel)
         if total != item.size:
             raise SourceError(f"{item.rel} changed while copying ({total} of {item.size} bytes)")
-        try:
-            os.fsync(fout.fileno())
-            _fadvise(fout.fileno(), "POSIX_FADV_DONTNEED")
-        except OSError as e:
-            raise DestError(dest_message("write", item.rel, e)) from e
     except BaseException:
         fout.close()
         _remove_quietly(tmp)
         raise
+    return Pending(item, fout, tmp, dst,
+                   Result(fp=edges.fingerprint(), xxh128=h.hexdigest() if h else None))
+
+
+def finish(p: Pending) -> Result:
+    """Second stage: fsync, restore the mtime, atomic rename. Several files
+    can be finished in parallel while the next one is being written: on a
+    network share the flush is where the time goes."""
     try:
-        fout.close()
-        os.utime(tmp, (item.mtime, item.mtime))
-        os.replace(tmp, dst)
+        os.fsync(p.fout.fileno())
+        _fadvise(p.fout.fileno(), "POSIX_FADV_DONTNEED")
+        p.fout.close()
+        os.utime(p.tmp, (p.item.mtime, p.item.mtime))
+        os.replace(p.tmp, p.dst)
     except OSError as e:
-        _remove_quietly(tmp)
-        raise DestError(dest_message("finish", item.rel, e)) from e
-    return Result(fp=edges.fingerprint(), xxh128=h.hexdigest() if h else None)
+        p.abort()
+        raise DestError(dest_message("write", p.item.rel, e)) from e
+    return p.result
+
+
+def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=None,
+              cancel: threading.Event | None = None, chunk: int = CHUNK) -> Result:
+    """Copy one file (both stages); `progress(nbytes)` is called per chunk."""
+    return finish(write_file(item, dest_root, want_hash=want_hash, progress=progress,
+                             cancel=cancel, chunk=chunk))
 
 
 def _stream(fin, fout, h, edges, progress, cancel, chunk, rel) -> int:
