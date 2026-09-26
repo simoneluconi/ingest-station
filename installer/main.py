@@ -44,6 +44,8 @@ class InstallError(Exception):
 class Log:
     def __init__(self):
         self.lines: list[str] = []
+        # test builds (build.py --test-vm): mirror the log on the serial port
+        self.serial = "ingest_test_serial" in sysfs.kernel_cmdline()
 
     def __call__(self, msg: str = "", screen: bool = True) -> None:
         stamp = time.strftime("%H:%M:%S")
@@ -51,6 +53,26 @@ class Log:
             self.lines.append(f"{stamp} {line}")
             if screen:
                 print(f"  {line}", flush=True)
+            self._kmsg(line)
+            if self.serial:
+                self._serial(line)
+
+    @staticmethod
+    def _serial(line: str) -> None:
+        try:
+            with open("/dev/ttyS0", "w", encoding="utf-8") as t:
+                t.write(f"ingest-install: {line}\r\n")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _kmsg(line: str) -> None:
+        # info level: kept in dmesg, not printed on the console with loglevel=3
+        try:
+            with open("/dev/kmsg", "w", encoding="utf-8") as k:
+                k.write(f"<6>ingest-install: {line}\n")
+        except OSError:
+            pass
 
     def text(self) -> str:
         return "\n".join(self.lines) + "\n"
@@ -122,6 +144,14 @@ def choose_target(log: Log, usb_disk: str) -> blockdev.Disk:
     cands, rejected = blockdev.install_candidates(disks, {usb_disk})
     for d, why in rejected:
         log(f"  skipped {d.name}: {why}", screen=False)
+    # test builds only (build.py --test-vm): QEMU's emulated eMMC is reported
+    # as removable; accept the named MMC device anyway
+    forced = sysfs.kernel_cmdline().get("ingest_test_target")
+    if forced:
+        for d, why in rejected:
+            if d.name == forced and why == "removable" and d.name != usb_disk:
+                log(f"TEST BUILD: accepting {d.name} despite: {why}")
+                return d
     if len(cands) == 1:
         return cands[0]
     listing = "\n".join(f"  {d.describe()}" for d in disks) or "  (no disks at all)"
@@ -134,13 +164,21 @@ def partition_dev(disk: str, n: int) -> str:
     return f"/dev/{blockdev.partition_name(disk, n)}"
 
 
-def wait_for_partitions(log: Log, disk: str, count: int) -> None:
+def wait_for_partitions(log: Log, disk: str, count: int, stable: float = 2.0) -> None:
+    """Wait until the partition nodes exist and stay present: the kernel
+    removes and re-adds them while it re-reads the partition table."""
     devs = [partition_dev(disk, n) for n in range(1, count + 1)]
-    for _ in range(40):
+    deadline = time.monotonic() + 30
+    since = None
+    while time.monotonic() < deadline:
         if all(os.path.exists(d) for d in devs):
-            return
-        sysfs.run(["mdev", "-s"], check=False)
-        time.sleep(0.5)
+            since = since or time.monotonic()
+            if time.monotonic() - since >= stable:
+                return
+        else:
+            since = None
+            sysfs.run(["mdev", "-s"], check=False)
+        time.sleep(0.2)
     raise InstallError(f"partition devices did not appear: {', '.join(devs)}")
 
 
@@ -227,13 +265,12 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
               "-n", f"1:2048:+{ESP_MIB}M", "-t", "1:ef00", "-c", f"1:{ESP_LABEL}",
               "-n", "2:0:0", "-t", "2:8300", "-c", f"2:{DATA_LABEL}",
               f"/dev/{disk}"])
-    run(log, ["blockdev", "--rereadpt", f"/dev/{disk}"], check=False)
     wait_for_partitions(log, disk, 2)
 
     log("Formatting...")
     run(log, ["mkfs.vfat", "-F", "32", "-n", ESP_LABEL, esp_dev])
-    run(log, ["mkfs.ext4", "-F", "-q", "-L", DATA_LABEL, "-m", "0",
-              "-E", "lazy_itable_init=0,lazy_journal_init=0", data_dev])
+    wait_for_partitions(log, disk, 2, stable=0.5)
+    run(log, ["mkfs.ext4", "-F", "-q", "-L", DATA_LABEL, "-m", "0", data_dev])
     data_uuid = blkid_uuid(data_dev)
     log(f"ESP UUID {blkid_uuid(esp_dev)}, data UUID {data_uuid}", screen=False)
 
@@ -247,6 +284,9 @@ def install(log: Log, usb_mnt: str, target: blockdev.Disk) -> None:
         for mod in sysfs.listdir(os.path.join(boot, "x86_64-efi")):
             copy_file(os.path.join(boot, "x86_64-efi", mod),
                       os.path.join(ESP_MNT, "boot", "grub", "x86_64-efi", mod))
+        # empty marker: lets Alpine's boot media scan (nlplug-findfs) finish
+        # at once instead of waiting for its timeout (~4 s per boot)
+        open(os.path.join(ESP_MNT, "slots", ".boot_repository"), "wb").close()
         grubenv.create(os.path.join(ESP_MNT, slots.GRUBENV),
                        {"active_slot": "A", "data_uuid": data_uuid})
         os.sync()
@@ -324,7 +364,8 @@ def main() -> int:
         print(f"  Installing to eMMC {target.size_gb:.1f} GB ({target.name})")
         print("  ALL DATA ON THE eMMC WILL BE ERASED.")
         print()
-        for s in range(COUNTDOWN, 0, -1):
+        countdown = int(sysfs.kernel_cmdline().get("ingest_test_countdown") or COUNTDOWN)
+        for s in range(countdown, 0, -1):
             print(f"\r  Starting in {s:2d} s - press any key to CANCEL ", end="", flush=True)
             if wait_key(1):
                 print()
