@@ -5,7 +5,6 @@
 
 description="Ingest Station hardware watchdog"
 command=/sbin/watchdog
-command_args="-F -T ${WATCHDOG_TIMEOUT:-300} -t 20 /dev/watchdog"
 command_background=yes
 pidfile=/run/ingest-watchdog.pid
 
@@ -18,4 +17,8 @@ start_pre() {
 		ewarn "No hardware watchdog available"
 		return 1
 	fi
+	# same timeout the initramfs armed (ingest_wdt= on the kernel command line)
+	local t
+	t=$(sed -n 's/.*ingest_wdt=\([0-9]*\).*/\1/p' /proc/cmdline)
+	command_args="-F -T ${t:-300} -t 20 /dev/watchdog"
 }

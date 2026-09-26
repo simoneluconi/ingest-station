@@ -5,17 +5,23 @@
 # GRUB can count the attempt and roll back.
 
 description="Ingest Station boot confirmation"
-command=/usr/local/bin/ingest-slot
-command_args="boot-ok --wait ${BOOTOK_TIMEOUT:-180}"
-command_background=yes
 pidfile=/run/ingest-bootok.pid
 
 depend() {
 	after ingest-data ingest-network ingest-console
 }
 
-start_pre() {
-	grep -qw ingest_mode=install /proc/cmdline && return 1
-	grep -qw ingest_mode=rescue /proc/cmdline && return 1
+start() {
+	if grep -qE 'ingest_mode=(install|rescue)' /proc/cmdline; then
+		einfo "Not an eMMC boot, nothing to confirm"
+		return 0
+	fi
+	ebegin "Confirming boot in the background"
+	start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" 		--exec /usr/local/bin/ingest-slot -- boot-ok --wait "${BOOTOK_TIMEOUT:-180}"
+	eend $?
+}
+
+stop() {
+	[ -f "$pidfile" ] && start-stop-daemon --stop --pidfile "$pidfile" 2>/dev/null
 	return 0
 }
