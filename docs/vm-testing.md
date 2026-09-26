@@ -1,5 +1,10 @@
 # Smoke tests in a QEMU virtual machine
 
+> QEMU was used during phase 1 and then uninstalled from the build PC: since
+> the station has SSH and over-the-air updates, tests run directly on the
+> Wyse. The harness is kept for boot-chain changes that would otherwise need
+> a USB reinstall to recover from.
+
 The Wyse 3040 remains the reference, but most of the boot chain can be
 exercised on the Windows build host with QEMU before each hardware test.
 
@@ -54,6 +59,12 @@ Verified in the VM:
 - Rollback: a broken slot on trial panics, GRUB returns to the previous slot
   and sets `try_failed`; manual rollback to a broken slot is refused.
 - Watchdog: after its feeder is killed the TCO watchdog resets the VM.
+- SSH (key only, password refused) and an over-the-air update: 3 of 90
+  files sent, staged slot verified, trial boot confirmed.
+
+Not visible in the VM and found on the Wyse: the watchdog is exposed through
+ACPI WDAT, not iTCO; reinstalling over an existing installation (the VM
+always installed on an empty disk).
 
 Bugs found by the VM and fixed before any hardware test: kernel panic in
 the boot media scan (hook ran too late), watchdog auto-loaded with a 30 s

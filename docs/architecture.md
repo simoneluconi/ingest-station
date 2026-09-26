@@ -84,6 +84,7 @@ trial), `try_failed` (trial ran out of attempts), `data_uuid`.
    `active_slot=<new>` and clears the trial. If the checks do not pass
    within 3 minutes during a trial, it reboots.
 4. If the kernel hangs or cannot reach user space, the hardware watchdog
+   (ACPI WDAT on the Wyse 3040, iTCO on other Intel chipsets)
    armed by `early.sh` (300 s heartbeat, reset on the second expiry) resets
    the board; `panic=10` covers
    kernel panics.
@@ -96,13 +97,24 @@ cannot be loaded at all.
 grubenv is 1024 bytes and is always rewritten in place (same size, same
 clusters) because GRUB's `save_env` writes the underlying disk blocks.
 
+## Updates over the network
+
+`build.py --deploy HOST` (or `tools/wyse.py deploy`) connects with the build
+SSH key and runs `ingest-slot stage-begin` on the station, which prepares
+`/slots/.staging/` and returns the manifest of the running slot. Only the
+files whose SHA-256 differs are sent over SFTP, plus the new `slot.json`.
+`ingest-slot stage-commit` then copies the unchanged files from the running
+slot, verifies the whole staged system, updates the shared bootloader files
+where they differ, replaces the inactive slot and starts a trial. The
+signed update package of phase 5 will reuse the same staging path.
+
 ## Services (OpenRC)
 
 | Runlevel | Services |
 |---|---|
 | sysinit | devfs, dmesg, mdev, hwdrivers, modloop |
 | boot | modules, sysctl, hostname, bootmisc, syslog, hwclock, **ingest-watchdog**, **ingest-data** |
-| default | **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-bootok** |
+| default | **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-sshkeys**, sshd, **ingest-bootok** |
 
 Phase 2-4 add `ingestd` (daemon), `ingest-gui` and `ingest-web`.
 

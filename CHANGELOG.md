@@ -29,6 +29,14 @@ Phase 1: build, installer and eMMC boot.
   `ingest.local`; DHCP with optional static address.
 - `build.py --test-vm` and `tests/vm/qemu_vm.py`: smoke tests of the whole
   boot chain (installer, eMMC boot, A/B, rollback, watchdog) in QEMU.
+- SSH server (OpenSSH, key-only root login). The build key is generated in
+  `keys/private/` (never committed); extra public keys in
+  `keys/authorized_keys` or `/data/ssh/authorized_keys`; persistent host key.
+- Over-the-air updates: `build.py --deploy HOST` / `tools/wyse.py deploy`
+  send only the changed files; the station completes, verifies and installs
+  them in the inactive slot and boots it on trial (`ingest-slot stage-*`).
+- The installer registers an "Ingest Station" UEFI boot entry (efibootmgr).
+- NTP time is written to the hardware clock after every sync.
 
 ### Fixed (found in the VM before the first hardware test)
 - Kernel panic during the boot media scan: the slot hook now runs before
@@ -42,3 +50,14 @@ Phase 1: build, installer and eMMC boot.
 - `ingest-watchdog` overriding the initramfs timeout.
 - `mkfs.ext4` zeroing the whole data partition on devices without TRIM.
 - About 4 s per boot spent waiting in the boot media scan.
+
+### Fixed (found on the Wyse 3040)
+- Reinstalling over an existing installation failed ("Resource busy"): the
+  modloop was taken from the installed eMMC instead of the USB stick. Only
+  the boot media of the selected slot stays mounted now, and the installer
+  stops before erasing anything if the eMMC is still in use.
+- The watchdog was not armed in the initramfs: the Wyse exposes it through
+  ACPI WDAT (`wdat_wdt`), now included.
+- Boot confirmed at 19.9 s instead of 28.5 s: no per-boot modloop SHA1
+  check, DHCP no longer blocks the boot.
+- `ingest-bootok` was reported as crashed after finishing its job.

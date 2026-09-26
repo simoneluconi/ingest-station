@@ -97,7 +97,83 @@ The installation log is always saved on the stick
 The USB menu also offers a **Rescue shell** that boots the system from the
 stick without writing anything (log in as `root`, no password).
 
-## 4. Configure the share on the NAS (Unraid)
+## 4. Remote access (SSH) and updates over the network
+
+After the first installation from USB, the station can be reached and
+updated from the build PC over the LAN: no more USB stick.
+
+### SSH keys
+
+Access is **by key only**: password logins are disabled.
+
+- **The build key is created automatically.** The first run of `build.py`
+  generates an Ed25519 key pair in `keys/private/ssh_ed25519` (private) and
+  `keys/private/ssh_ed25519.pub` (public). The public key is put in the
+  image as root's authorised key; the private key stays on the PC and is
+  never committed (`keys/private/` is in `.gitignore`). Later builds reuse
+  the same key.
+- **Back up `keys/private/`.** If the private key is lost, the station only
+  trusts the old one: a new key is generated at the next build and must be
+  installed from the USB stick once.
+- **Adding your own keys** (another PC, a phone app...):
+  1. Create a key, if you do not have one. Windows (PowerShell):
+     `ssh-keygen -t ed25519` → the public key is in
+     `C:\Users\<you>\.ssh\id_ed25519.pub`. Linux/macOS: same command,
+     `~/.ssh/id_ed25519.pub`.
+  2. Copy the **public** key line (starts with `ssh-ed25519`) into
+     `keys/authorized_keys`, one key per line (create the file; it only
+     contains public keys, so it can safely be committed).
+  3. Rebuild and update the station (`build.py --deploy`, below).
+
+  Alternatively, keys appended on the station to `/data/ssh/authorized_keys`
+  survive reboots and updates.
+- **The station's own identity** (host key) is kept on its data partition,
+  so it does not change at every boot. It does change after a reinstall:
+  delete the station's line from `keys/private/known_hosts` (used by
+  `tools/wyse.py`) or from `~/.ssh/known_hosts` (used by `ssh`).
+
+### Connecting
+
+The IP address is shown on the console banner (or use `ingest.local`).
+
+```powershell
+# with the tool in this repository (no ssh client needed)
+.venv\Scripts\python tools\wyse.py status 192.168.1.50
+.venv\Scripts\python tools\wyse.py sh 192.168.1.50 "dmesg | grep ingest"
+
+# or with the SSH client of Windows / Git
+ssh -i keys\private\ssh_ed25519 root@192.168.1.50
+```
+
+If the Windows `ssh` client refuses the key with *UNPROTECTED PRIVATE KEY
+FILE*, restrict its permissions once:
+`icacls keys\private\ssh_ed25519 /inheritance:r /grant:r "$($env:USERNAME):R"`.
+
+Keep SSH on the local network only: do not forward port 22 on the router.
+
+### Updating over the network
+
+```powershell
+.venv\Scripts\python build.py --deploy 192.168.1.50
+```
+
+1. `build.py` builds the new system as usual.
+2. It asks the station which files the running slot contains and sends
+   **only the files that changed** (usually a few MB: the kernel and the
+   modules rarely change).
+3. The station completes the new system with its own unchanged files,
+   verifies every checksum, installs it into the **inactive slot** and
+   reboots into it **on trial**.
+4. `build.py` waits for the station to come back: `update confirmed` when
+   the new system is healthy; if not, the station automatically goes back to
+   the previous slot within 3 attempts and `build.py` reports
+   `UPDATE ROLLED BACK`.
+
+`tools\wyse.py deploy 192.168.1.50 --no-reboot` stages the update and
+leaves the reboot to you. An update is refused while a previous one is
+still on trial.
+
+## 5. Configure the share on the NAS (Unraid)
 
 The destination (NFS or SMB server, share, folder, credentials) is
 configured **from the station's GUI**: a first-boot wizard, then
@@ -131,7 +207,7 @@ faster (the mover transfers the files to the array later).
    The credentials are stored on the station's data partition with
    permissions `600`.
 
-## 5. Daily use, updates and rollback
+## 6. Daily use, updates and rollback
 
 *(Complete description in phase 2-5.)* Plug in a card: the summary shows
 what is new and what was already imported; choose *Import new only*
@@ -144,7 +220,7 @@ does not report a healthy boot within 3 attempts, the station automatically
 goes back to the previous slot. A manual rollback is available in the
 settings (and, for now, with `ingest-slot rollback` on the console).
 
-## 6. Troubleshooting (Wyse 3040 quirks)
+## 7. Troubleshooting (Wyse 3040 quirks)
 
 | Symptom | Cause and what the system does |
 |---|---|
@@ -174,4 +250,5 @@ Useful console commands (tty2, `Alt+F2`, login `root`): `ingest-slot status`,
 | `installer/` | eMMC installer |
 | `tests/` | unit tests (sysfs fixtures, grubenv, slots, packages, initrd) |
 | `docs/` | architecture, test procedures, boot timings |
-| `keys/` | Alpine release GPG key; the private update key is never committed |
+| `keys/` | Alpine release GPG key; `keys/private/` (never committed) holds the SSH key and, later, the update signing key |
+| `tools/wyse.py` | SSH client for the station: commands, status, over-the-air updates |
