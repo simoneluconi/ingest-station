@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# Ingest Station daemon: sources, imports, index, share. Restarted
+# automatically if it ever exits.
+
+description="Ingest Station daemon"
+supervisor=supervise-daemon
+command=/usr/local/sbin/ingestd
+respawn_delay=2
+respawn_max=0
+
+depend() {
+	need localmount
+	after ingest-data ingest-network
+	before ingest-bootok
+}
+
+start_pre() {
+	checkpath -d -m 0755 /run/ingest
+}

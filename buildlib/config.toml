@@ -53,6 +53,10 @@ system = [
   "blkid", "lsblk", "wipefs", "sgdisk", "dosfstools", "e2fsprogs", "efibootmgr",
   "avahi",
   "openssh-server", # key-only root access for tests and --deploy updates
+  # daemon
+  "py3-xxhash",     # xxh128 hashes (C, fast)
+  "nfs-utils",      # NFS destination
+  "cifs-utils",     # SMB destination
 ]
 
 [grub]

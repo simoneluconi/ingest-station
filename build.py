@@ -46,7 +46,7 @@ RUNLEVELS = {
     "boot": ["modules", "sysctl", "hostname", "bootmisc", "syslog", "hwclock",
              "ingest-watchdog", "ingest-data"],
     "default": ["ingest-network", "ingest-console", "avahi-daemon", "ntpd", "ingest-sshkeys",
-                "sshd", "ingest-bootok"],
+                "sshd", "ingestd", "ingest-bootok"],
     "shutdown": ["mount-ro", "killprocs", "savecache"],
 }
 TIMEZONE = "Europe/Rome"
