@@ -5,7 +5,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Phase 2 (daemon), first part: USB mass storage.
+Phase 2 (daemon): USB mass storage, cameras over PTP/MTP (not yet tested
+with a real camera), index rebuild.
 
 ### Added
 - `ingestd` daemon (OpenRC, restarted automatically), single source of
@@ -39,6 +40,17 @@ Phase 2 (daemon), first part: USB mass storage.
   kept; at the next insertion only the missing files are new.
 - Optional auto-import with countdown (off by default), import queue,
   status beeps through the PC speaker (off by default).
+- Cameras and phones over PTP/MTP through libgphoto2 (ctypes, no FUSE):
+  one source per storage (e.g. the two SD slots of a camera), identified by
+  model and USB serial; files are read with partial reads, so the fingerprint
+  is the same as from a card reader (a file imported from the card is known
+  when the camera is connected by cable, and vice versa). A disconnection or
+  auto power-off ends the import; completed files are kept.
+- `ingestctl rebuild-index`: rebuilds the index from the `.xxh128`
+  manifests on the share (tested: 4 imports, 384 files in 44 s).
+- The last import result stays in the state after the card is removed
+  (`ingestctl dismiss`); clearer share errors; the share is shown offline
+  while an import is paused.
 
 ### Measured on the Wyse 3040
 - 5.6 GB (183 files) from a USB 3 stick to an SMB share on a Windows PC with
