@@ -96,3 +96,20 @@ Record the results in [boot-timing.md](boot-timing.md).
 - if the system boots: `dmesg > /data/log/dmesg.txt`, `logread >
   /data/log/messages.txt`, then boot the stick's *Rescue shell* to copy
   them, or read them on the console.
+
+## Results on the Wyse 3040 (2026-09-26, version 0.1.0)
+
+Run over SSH from the build PC unless noted.
+
+| Test | Result |
+|---|---|
+| Installation from USB (F12 → *Boot from file*) | OK; reinstall over an existing system OK after the fix |
+| eMMC detection (`mmcblk0`, boot0/boot1 excluded) | OK |
+| Boot from eMMC through the registered UEFI entry | OK (`BootCurrent` = Ingest Station) |
+| Reboot (dw_dmac quirk) | OK, several reboots |
+| NTP and hardware clock | OK |
+| Over-the-air update (`build.py --deploy`) | OK: 3 of 90 files sent, slot B confirmed |
+| Rollback of a broken slot on trial | OK: kernel panic, back on the previous slot, `try_failed` set (~100 s) |
+| Watchdog (ACPI WDAT) after its feeder is killed | OK: reset after 509 s, normal boot |
+| Boot confirmed | 19.9-25.7 s after kernel start |
+| `poweroff`, power cut while running | to be checked on site |
