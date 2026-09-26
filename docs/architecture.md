@@ -134,9 +134,15 @@ Phase 2-4 add `ingestd` (daemon), `ingest-gui` and `ingest-web`.
 
 - `ingestd`: single source of truth; device detection, queue, copy, verify,
   index (SQLite), share monitoring, updates, beeps. Exposes an HTTP +
-  WebSocket API on 127.0.0.1 (the same on Windows in `--simulate`).
-- `ingest-gui`: pygame (Alpine `py3-pygame` on the device, pygame-ce on
-  Windows) rendering off-screen; output through KMS/DRM dumb buffers with
-  pure-Python ioctls (no Mesa), input from evdev (touch, mouse, keyboard).
+  WebSocket API on 127.0.0.1.
+- `ingest-gui`: pygame (Alpine `py3-pygame`) rendering off-screen; output
+  through KMS/DRM dumb buffers with pure-Python ioctls (no Mesa), input from
+  evdev (touch, mouse, keyboard).
+
+There is no Windows simulation mode (dropped from the original brief):
+development and tests run on the Wyse itself, reached over SSH and updated
+with `build.py --deploy`. Logic that does not touch hardware (copy engine,
+verification, index, device parsing) is covered by unit tests with fixtures
+that run on the build PC.
 - `ingest-web`: aiohttp server on the LAN with WebSocket live updates;
   commands protected by a PIN.
