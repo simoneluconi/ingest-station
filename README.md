@@ -69,8 +69,10 @@ also be smoke-tested in a QEMU virtual machine, see
 2. Copy the **content** of `dist/usb/` to the root of the stick (so that
    `EFI\BOOT\BOOTX64.EFI` is at the top level). No Rufus/Etcher/image
    writer is needed.
-3. Plug the stick into the Wyse, power on, press **F12** and choose the USB
-   stick. Choose **Install Ingest Station to eMMC** (default after 3 s).
+3. Plug the stick into the Wyse, power on, press **F12**. If choosing the
+   USB stick in the list does not start it, use **Boot from file** (or
+   *UEFI boot path*) and select `EFI\BOOT\BOOTX64.EFI` on the stick.
+   In the menu choose **Install Ingest Station to eMMC** (default after 3 s).
 4. The installer finds the internal eMMC and shows
    `Installing to eMMC 7.8 GB (mmcblk0)` with a **10-second countdown:
    press any key to cancel**. Then it erases the eMMC, creates the
@@ -80,7 +82,13 @@ also be smoke-tested in a QEMU virtual machine, see
    - If the eMMC turns out to be read-only (worn out), the installer stops
      and says so.
 5. At the end, **remove the USB stick** and press a key: the station
-   restarts from the eMMC. The stick is needed again only to reinstall.
+   restarts from the eMMC. The installer registers an **Ingest Station**
+   UEFI boot entry first in the boot order, and the bootloader is also at
+   the fallback path `\EFI\BOOT\BOOTX64.EFI`. The stick is needed again only
+   to reinstall.
+
+At the first log in on the console: user `root`, no password (console
+access only; there is no remote shell).
 
 The installation log is always saved on the stick
 (`ingest-install-YYYYMMDD-HHMMSS.log`) and on the station
@@ -142,7 +150,9 @@ settings (and, for now, with `ingest-slot rollback` on the console).
 |---|---|
 | Installers crash with `UnicodeDecodeError` | The eMMC reports a model name with an invalid byte (e.g. `MMC H8G4a\x92`). The installer never reads model names; the app decodes all device strings with replacement characters. |
 | eMMC not detected by recent kernels | The `sdhci`, `sdhci-acpi` and `mmc_block` drivers are not auto-loaded. They are loaded explicitly: in the initramfs (`modules=` on the kernel command line; the Alpine ISO initramfs already contains them), in the installer and in the system (`/etc/modules`). If the eMMC disappears after a kernel update, the new slot does not boot and GRUB rolls back. |
-| Firmware does not boot the installed system | The 3040 ignores NVRAM boot entries: the bootloader is always installed at the fallback path `\EFI\BOOT\BOOTX64.EFI`. Check that the eMMC is enabled in the BIOS boot sequence. |
+| Firmware does not boot the installed system | The bootloader is always installed at the fallback path `\EFI\BOOT\BOOTX64.EFI` (the 3040 often ignores NVRAM entries) and an "Ingest Station" UEFI entry is also registered. In the BIOS, check *Boot Sequence*; if needed add a boot option pointing to `\EFI\BOOT\BOOTX64.EFI` on the eMMC. |
+| USB stick listed in F12 but does not boot | Use F12 → *Boot from file* and select `EFI\BOOT\BOOTX64.EFI`. Check that Secure Boot is disabled. |
+| Wrong time | The clock is synchronised with NTP (`pool.ntp.org`) and written to the hardware clock after every sync, so it survives power cuts. |
 | Leftover ThinOS/ThinLinux partitions | The installer runs `wipefs` on every partition and on the whole disk before partitioning. |
 | Hang on shutdown or reboot | Caused by the `dw_dmac` DMA driver: it is blacklisted (`/etc/modprobe.d/ingest-wyse.conf` and `modprobe.blacklist=` on the kernel command line). |
 | Monitor does not wake up after standby | Console blanking and display power saving are disabled (`consoleblank=0`); the GUI never blanks the screen. |
