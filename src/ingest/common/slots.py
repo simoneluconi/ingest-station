@@ -310,6 +310,13 @@ def health_problems(cmdline: dict[str, str]) -> list[str]:
     problems = []
     if cmdline.get("ingest_data", "").removeprefix("UUID=") and not os.path.ismount("/data"):
         problems.append("data partition not mounted")
+    try:
+        from .client import Client
+        with Client(timeout=10) as c:
+            if c.call("ping") != "pong":
+                problems.append("ingestd does not answer")
+    except Exception as e:  # noqa: BLE001 - any failure means unhealthy
+        problems.append(f"ingestd: {e}")
     return problems
 
 
