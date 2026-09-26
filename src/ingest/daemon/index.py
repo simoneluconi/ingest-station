@@ -100,6 +100,10 @@ class Index:
                       " bytes_done=(SELECT COALESCE(SUM(size),0) FROM files WHERE import_id=?)"
                       " WHERE id=?", (time.time(), status, error, import_id, import_id, import_id))
 
+    def set_started(self, import_id: int, started: float) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE imports SET started=? WHERE id=?", (started, import_id))
+
     def mark_interrupted(self) -> int:
         """At daemon start: imports left 'running' were interrupted."""
         with self._conn() as c:

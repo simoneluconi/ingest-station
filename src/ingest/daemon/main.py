@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from ingest import __version__
 from ingest.common import config, sysfs
 
-from . import devices, mounts, naming, ptp, scanner, share
+from . import devices, mounts, naming, ptp, rebuild, scanner, share
 from .beeper import Beeper
 from .copier import Cancelled, Item
 from .importer import ImportJob
@@ -558,6 +558,14 @@ class Daemon:
         if cmd == "history":
             return await asyncio.to_thread(self.index.history, int(args.get("limit", 50)),
                                            args.get("query", ""))
+        if cmd == "index.rebuild":
+            if self.active_id:
+                raise ValueError("an import is running")
+            st = await asyncio.to_thread(share.check, self.settings["share"])
+            if st["state"] != "online":
+                raise ValueError(f"share offline: {st.get('reason', '')}")
+            return await asyncio.to_thread(rebuild.rebuild, self.index,
+                                           share.dest_root(self.settings["share"]))
         if cmd == "beep":
             Beeper(args.get("backend", self.settings["beep"]["backend"])).play(
                 args.get("pattern", "ok"))

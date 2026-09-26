@@ -111,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     s_mk.add_argument("path")
     st = sub.add_parser("settings", help="show or change settings: key=value (JSON values)")
     st.add_argument("pairs", nargs="*")
+    sub.add_parser("rebuild-index", help="rebuild the index from the manifests on the share")
     h = sub.add_parser("history")
     h.add_argument("query", nargs="?", default="")
     b = sub.add_parser("beep")
@@ -177,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
                             node = node.setdefault(k, {})
                         node[parts[-1]] = val
                     print(json.dumps(c.call("settings.set", changes=changes), indent=2))
+            elif a.cmd == "rebuild-index":
+                print(json.dumps(c.call("index.rebuild"), indent=2))
             elif a.cmd == "history":
                 for imp in c.call("history", query=a.query):
                     when = dt.datetime.fromtimestamp(imp["started"]).strftime("%Y-%m-%d %H:%M")

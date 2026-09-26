@@ -178,3 +178,19 @@ def test_flush_error_with_files_in_flight(tmp_path, monkeypatch):
     for rel in card:
         assert (share / res.folder / rel).read_bytes() == (tmp_path / "card" / rel).read_bytes()
     assert not list(share.rglob("*" + copier.TMP_SUFFIX))
+
+
+def test_rebuild_index_from_manifests(tmp_path):
+    from ingest.daemon import rebuild
+    make_card(tmp_path / "card", CARD)
+    idx = Index(str(tmp_path / "idx.db"))
+    j, _, share = job(tmp_path, scanner.scan(str(tmp_path / "card"), idx).plan("new"),
+                      verify="hash", index=idx)
+    res = j.run()
+    # the station's data partition is lost: new, empty index
+    fresh = Index(str(tmp_path / "fresh.db"))
+    stats = rebuild.rebuild(fresh, str(share))
+    assert stats == {"folders": 1, "files": 3, "missing": 0, "skipped_folders": 0}
+    again = scanner.scan(str(tmp_path / "card"), fresh)
+    assert again.known_files == 3 and again.previous[0]["folder"] == res.folder
+    assert rebuild.rebuild(fresh, str(share))["skipped_folders"] == 1   # idempotent
