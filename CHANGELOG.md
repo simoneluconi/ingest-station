@@ -3,6 +3,48 @@
 All notable changes to this project are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Phase 2 (daemon), first part: USB mass storage.
+
+### Added
+- `ingestd` daemon (OpenRC, restarted automatically), single source of
+  truth, JSON-lines API on the Unix socket `/run/ingestd.sock` with a live
+  state stream; `ingestctl` command line client.
+- Source detection: USB disks, sticks and card readers (one disk per slot,
+  empty slots shown), hot-plug through kernel uevents plus a 2 s rescan,
+  coldplug at start. exFAT, FAT, NTFS (ntfs3), ext4 and HFS+; APFS and
+  encrypted disks reported as not supported. Update and installer sticks
+  are recognised.
+- Read-only guarantee: the block device is set read-only in the kernel
+  before mounting; ext4 is mounted with `noload`.
+- Scan and recognition of already imported files by fingerprint (size +
+  xxh128 of the first and last MiB); only files whose size was seen before
+  are read, so new cards are summarised instantly.
+- Copy engine: overlapped read/write with large reusable buffers,
+  temporary file + fsync + atomic rename, mtime preserved, xxh128 while
+  copying; up to 3 files flushed in parallel while the next one is written.
+- Verification modes: none, hash (manifest `<folder>.xxh128`), full (the
+  copies are read back from the share after dropping the caches).
+- Destination folder `AAAA-MM-GG_HHMM_<label>`; when the card has no label,
+  the camera brand is guessed from `DCIM` (100CANON, 100MSDCF...).
+- SQLite index (WAL) on the data partition, one transaction per file,
+  backed up to `<share>/.ingest-station/index.db` after every import.
+- Destination: NFS or SMB on any server, protocol version negotiated
+  automatically (NFS 4.2 → 3, SMB 3.1.1 → 2.1), soft mounts, health checks
+  (read-only every 30 s, write probe before imports), folder listing.
+- Share lost during a copy: the import pauses with the reason and waits for
+  Retry (restarts from the interrupted file) or Cancel; no automatic retry.
+- Card removed during an import: the import fails, completed files are
+  kept; at the next insertion only the missing files are new.
+- Optional auto-import with countdown (off by default), import queue,
+  status beeps through the PC speaker (off by default).
+
+### Measured on the Wyse 3040
+- 5.6 GB (183 files) from a USB 3 stick to an SMB share on a Windows PC with
+  mandatory signing: 124 s, 45 MB/s average, CPU 93% idle. The stick reads
+  at 107 MB/s; the share accepts ~58 MB/s.
+
 ## [0.1.0] - unreleased
 
 Phase 1: build, installer and eMMC boot.
