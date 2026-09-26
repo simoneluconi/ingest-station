@@ -15,6 +15,7 @@ It keeps running whatever happens to its clients.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -27,9 +28,9 @@ from dataclasses import dataclass, field
 from ingest import __version__
 from ingest.common import config, sysfs
 
-from . import devices, mounts, scanner, share
+from . import devices, mounts, naming, ptp, scanner, share
 from .beeper import Beeper
-from .copier import Cancelled
+from .copier import Cancelled, Item
 from .importer import ImportJob
 from .index import Index
 
@@ -45,26 +46,42 @@ log = logging.getLogger("ingestd")
 @dataclass
 class Source:
     id: str
-    slot: str                      # card reader slot / USB port identity
-    disk: devices.Disk
+    slot: str                      # card reader slot / USB port / camera identity
+    disk: devices.Disk | None = None
     volume: devices.Volume | None = None
+    kind: str = "disk"             # disk | camera
+    cam: dict | None = None        # camera: model, vendor, serial, storage (ptp.Storage), n
     status: str = "detected"       # empty detected mounting scanning ready countdown
                                    # queued importing done error unsupported update installer
     message: str = ""
     mount: str | None = None
     scan: scanner.ScanResult | None = None
+    stale: bool = False            # imported since the scan: rescan before importing again
     countdown: int | None = None
     result: dict | None = None
     request: dict = field(default_factory=dict)   # mode / verify chosen for the import
     cancel: threading.Event = field(default_factory=threading.Event)
     task: asyncio.Task | None = None
 
+    def info(self) -> dict:
+        if self.kind == "camera" and self.cam:
+            st = self.cam.get("storage")
+            name = self.cam["model"]
+            if st is not None and self.cam.get("count", 1) > 1:
+                name += f" - {st.description or st.label or 'slot ' + str(self.cam['n'] + 1)}"
+            return {"name": name, "model": self.cam["model"], "vendor": self.cam["vendor"],
+                    "serial": self.cam["serial"], "capacity": st.capacity if st else 0,
+                    "fs": "camera", "label": ""}
+        d = self.disk
+        return {"name": devices.describe(d) if d else "", "model": d.model if d else "",
+                "vendor": d.vendor if d else "", "serial": d.serial if d else "",
+                "capacity": d.size if d else 0,
+                "fs": self.volume.fstype if self.volume else "",
+                "label": self.volume.label if self.volume else ""}
+
     def to_dict(self) -> dict:
-        d = {"id": self.id, "slot": self.slot, "status": self.status, "message": self.message,
-             "name": devices.describe(self.disk), "model": self.disk.model,
-             "vendor": self.disk.vendor, "capacity": self.disk.size,
-             "fs": self.volume.fstype if self.volume else "",
-             "label": self.volume.label if self.volume else "",
+        d = {"id": self.id, "slot": self.slot, "kind": self.kind, "status": self.status,
+             "message": self.message, **self.info(),
              "countdown": self.countdown, "result": self.result}
         if self.scan is not None:
             d["summary"] = self.scan.summary()
@@ -94,6 +111,8 @@ class Daemon:
         self._rescan = asyncio.Event()
         self._share_now = asyncio.Event()
         self._disk_sig: dict[str, tuple] = {}
+        self._cam_sig: dict[str, tuple] = {}
+        self.cameras: dict[str, object] = {}        # key -> ptp.Camera
         self.loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------ state
@@ -176,6 +195,20 @@ class Daemon:
         for key in [k for k in self._disk_sig if k not in seen_slots]:
             del self._disk_sig[key]
             await self._drop_slot(key, removed=True)
+        cams = await asyncio.to_thread(ptp.usb_cameras)
+        seen_cams = set()
+        for ucam in cams:
+            key = f"cam:{ucam.serial or ucam.port}"
+            seen_cams.add(key)
+            sig = (ucam.busnum, ucam.devnum)
+            if self._cam_sig.get(key) == sig:
+                continue
+            self._cam_sig[key] = sig
+            await self._drop_slot(key, removed=False)
+            asyncio.create_task(self._camera_added(key, ucam))
+        for key in [k for k in self._cam_sig if k not in seen_cams]:
+            del self._cam_sig[key]
+            await self._drop_slot(key, removed=True)
 
     async def _slot_changed(self, key: str, disk: devices.Disk) -> None:
         await self._drop_slot(key, removed=False)
@@ -213,6 +246,9 @@ class Daemon:
                 src.task.cancel()
             if src.mount:
                 await asyncio.to_thread(mounts.umount, src.mount, True)
+        cam = self.cameras.pop(key, None)
+        if cam is not None:
+            await asyncio.to_thread(_close_quietly, cam)
         self.changed()
 
     async def _prepare(self, src: Source) -> None:
@@ -245,6 +281,73 @@ class Daemon:
         except Exception as e:
             src.status, src.message = "error", str(e) or e.__class__.__name__
             log.exception("prepare %s", src.id)
+            self.beeper.play("error")
+            self.changed()
+
+    # ---------------------------------------------------------------- cameras
+    async def _camera_added(self, key: str, ucam) -> None:
+        """Open a PTP/MTP device and create one source per storage."""
+        placeholder = Source(id=key, slot=key, kind="camera", status="detected",
+                             message="Connecting to the camera...",
+                             cam={"model": ucam.product or "Camera", "vendor": ucam.vendor,
+                                  "serial": ucam.serial, "storage": None, "n": 0, "count": 1})
+        self.sources[key] = placeholder
+        self.changed()
+        try:
+            models = await asyncio.to_thread(ptp.autodetect)
+            model = models.get(ucam.port)
+            if not model:
+                raise ptp.PTPError("camera not recognised: unlock it or allow file access "
+                                   "(phones: USB mode 'File transfer')")
+            cam = await asyncio.to_thread(ptp.Camera, model, ucam.port)
+            self.cameras[key] = cam
+            storages = await asyncio.to_thread(cam.storages)
+        except Exception as e:
+            placeholder.status, placeholder.message = "error", str(e)
+            # try again on the next rescan (the user may unlock a phone)
+            self._cam_sig.pop(key, None)
+            self.changed()
+            return
+        if self.sources.get(key) is placeholder:
+            del self.sources[key]
+        for n, st in enumerate(storages):
+            sid = f"{key}:{n}"
+            src = Source(id=sid, slot=key, kind="camera",
+                         cam={"model": model, "vendor": ucam.vendor, "serial": ucam.serial,
+                              "storage": st, "n": n, "count": len(storages)})
+            self.sources[sid] = src
+            src.task = asyncio.create_task(self._prepare_camera(src, cam))
+        self.beeper.play("start")
+        self.changed()
+
+    async def _prepare_camera(self, src: Source, cam) -> None:
+        try:
+            src.status = "scanning"
+            self.changed()
+            st = src.cam["storage"]
+            files = await asyncio.to_thread(cam.walk, st.basedir, src.cancel)
+            base = st.basedir.rstrip("/")
+            items = []
+            for cf in files:
+                rel = f"{cf.folder[len(base):]}/{cf.name}".lstrip("/")
+                items.append(Item(src=f"{cf.folder}/{cf.name}",
+                                  rel=naming.sanitize_relpath(rel), size=cf.size,
+                                  mtime=cf.mtime,
+                                  opener=functools.partial(ptp.CameraStream, cam, cf)))
+            dcim = sorted({i.rel.split("/")[1] for i in items
+                           if i.rel.upper().startswith("DCIM/") and i.rel.count("/") >= 2})
+            src.scan = await asyncio.to_thread(scanner.scan_items, items, self.index,
+                                               src.cancel, naming.dcim_brand(dcim))
+            src.status, src.message = "ready", ""
+            self.changed()
+            await self._maybe_auto_import(src)
+        except asyncio.CancelledError:
+            raise
+        except Cancelled:
+            pass
+        except Exception as e:
+            src.status, src.message = "error", str(e) or e.__class__.__name__
+            log.exception("camera %s", src.id)
             self.beeper.play("error")
             self.changed()
 
@@ -308,9 +411,7 @@ class Daemon:
         job = ImportJob(
             items=src.scan.plan(req.get("mode", "new")), verify=req.get("verify", "hash"),
             share_root=share.dest_root(self.settings["share"]), index=self.index,
-            source={"label": src.volume.label, "model": src.disk.model,
-                    "serial": src.disk.serial, "kind": "disk",
-                    "name": devices.describe(src.disk), "brand": src.scan.brand},
+            source={**src.info(), "kind": src.kind, "brand": src.scan.brand},
             schema=self.settings["folder_schema"], report=report, decide=decide,
             ensure_share=ensure_share, cancel=src.cancel,
             verify_mbps=self.settings["stats"]["verify_mbps"])
@@ -322,7 +423,7 @@ class Daemon:
             src.status = "done" if res.status == "done" else "error"
             src.message = ("You can remove the card" if res.status == "done" else res.error)
             self.last_result = {**src.result, "source": src.id,
-                                "name": devices.describe(src.disk), "time": time.time()}
+                                "name": src.info()["name"], "time": time.time()}
             if res.status == "done" and res.copy_mbps > 1:
                 st = self.settings["stats"]
                 st["copy_mbps"] = round(0.7 * st["copy_mbps"] + 0.3 * res.copy_mbps, 1)
@@ -336,6 +437,7 @@ class Daemon:
             self.beeper.play("error")
         finally:
             self.active, self.active_id = None, None
+            src.stale = True
             if src.mount and src.id in self.sources:
                 # release the card: it can be removed safely
                 await asyncio.to_thread(mounts.umount, src.mount)
@@ -437,6 +539,7 @@ class Daemon:
             if src.id == self.active_id:
                 raise ValueError("import running")
             self._disk_sig.pop(src.slot, None)
+            self._cam_sig.pop(src.slot, None)
             self._rescan.set()
             return True
         if cmd == "settings.get":
@@ -488,8 +591,8 @@ class Daemon:
         self._set_share(st)
         if st["state"] != "online":
             raise ValueError(f"share offline: {st.get('reason', '')}")
-        if src.mount is None:
-            raise ValueError("source not mounted: rescan it")
+        if src.stale or (src.kind == "disk" and src.mount is None):
+            raise ValueError("already imported from this scan: rescan the source first")
         src.request = {"mode": mode, "verify": verify}
         src.countdown = None
         self._enqueue(src)
@@ -554,6 +657,13 @@ class Daemon:
         await self.uevents()
         await asyncio.gather(server.serve_forever(), self.publisher(), self.rescanner(),
                              self.share_monitor(), self.ip_monitor())
+
+
+def _close_quietly(cam) -> None:
+    try:
+        cam.close()
+    except Exception:  # noqa: BLE001 - the camera may be gone already
+        pass
 
 
 def local_ip() -> str:

@@ -94,10 +94,17 @@ def _raise(err: OSError) -> None:
 
 
 def scan(root: str, index: Index, cancel: threading.Event | None = None) -> ScanResult:
+    """Scan a mounted file system."""
+    return scan_items(walk(root, cancel), index, cancel,
+                      brand=naming.dcim_brand(sysfs.listdir(os.path.join(root, "DCIM"))))
+
+
+def scan_items(items: list[Item], index: Index, cancel: threading.Event | None = None,
+               brand: str = "") -> ScanResult:
+    """Compare a list of files (from a card or a camera) with the index."""
     t0 = time.monotonic()
     res = ScanResult()
-    items = walk(root, cancel)
-    res.brand = naming.dcim_brand(sysfs.listdir(os.path.join(root, "DCIM")))
+    res.brand = brand
     sizes = index.known_sizes()
     fps: list[str] = []
     for it in items:
@@ -107,7 +114,7 @@ def scan(root: str, index: Index, cancel: threading.Event | None = None) -> Scan
         if it.size in sizes:
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
-            entry.fp = fingerprint.of_file(it.src, it.size)
+            entry.fp = fingerprint.of_file(it.src, it.size, it.opener)
             fps.append(entry.fp)
     known = index.lookup(fps) if fps else {}
     prev: dict[int, dict] = {}

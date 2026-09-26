@@ -57,6 +57,7 @@ system = [
   "py3-xxhash",     # xxh128 hashes (C, fast)
   "nfs-utils",      # NFS destination
   "cifs-utils",     # SMB destination
+  "libgphoto2",     # cameras and phones over PTP/MTP (ctypes, no FUSE)
 ]
 
 [grub]

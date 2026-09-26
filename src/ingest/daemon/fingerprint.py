@@ -23,14 +23,14 @@ def mass_storage(size: int, head: bytes, tail: bytes) -> str:
     return f"{size}:{h.hexdigest()}"
 
 
-def of_file(path: str, size: int | None = None) -> str:
-    """Read the edges of a file and fingerprint it."""
-    with open(path, "rb") as f:
+def of_file(path: str, size: int | None = None, opener=None) -> str:
+    """Read the edges of a file (or of a camera stream from `opener`)."""
+    with (opener() if opener is not None else open(path, "rb")) as f:
         if size is None:
             size = os.fstat(f.fileno()).st_size
         head = f.read(EDGE)
         if size > EDGE:
-            f.seek(max(size - EDGE, EDGE) if size < 2 * EDGE else size - EDGE)
+            f.seek(max(size - EDGE, EDGE))
             tail = f.read(EDGE)
         else:
             tail = b""

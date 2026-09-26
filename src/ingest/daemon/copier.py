@@ -65,6 +65,10 @@ class Item:
     rel: str          # sanitised destination path, relative to the import folder
     size: int
     mtime: float
+    opener: object = None   # for camera files: returns a file-like stream
+
+    def open(self):
+        return self.opener() if self.opener is not None else open(self.src, "rb", buffering=0)
 
 
 @dataclass
@@ -73,13 +77,16 @@ class Result:
     xxh128: str | None
 
 
-def _fadvise(fd: int, advice_name: str, offset: int = 0, length: int = 0) -> None:
+def _fadvise(f, advice_name: str, offset: int = 0, length: int = 0) -> None:
+    """posix_fadvise on a file object or descriptor, when both exist."""
     advice = getattr(os, advice_name, None)
-    if advice is not None and hasattr(os, "posix_fadvise"):
-        try:
-            os.posix_fadvise(fd, offset, length, advice)
-        except OSError:
-            pass
+    if advice is None or not hasattr(os, "posix_fadvise"):
+        return
+    try:
+        fd = f if isinstance(f, int) else f.fileno()
+        os.posix_fadvise(fd, offset, length, advice)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 def temp_path(dst: str) -> str:
@@ -117,14 +124,14 @@ def write_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=N
         raise DestError(dest_message("create", item.rel, e)) from e
     try:
         try:
-            fin = open(item.src, "rb", buffering=0)
+            fin = item.open()
         except OSError as e:
             raise SourceError(f"cannot open {item.rel}: {e.strerror or e}") from e
         with fin:
-            _fadvise(fin.fileno(), "POSIX_FADV_SEQUENTIAL")
+            _fadvise(fin, "POSIX_FADV_SEQUENTIAL")
             h = xxhash.xxh3_128() if want_hash else None
             edges = EdgeCollector(item.size)
-            total = _stream(fin, fout, h, edges, progress, cancel, chunk, item.rel)
+            total = _stream(fin, fout, h, edges, progress, cancel, chunk, item.rel, item.size)
         if total != item.size:
             raise SourceError(f"{item.rel} changed while copying ({total} of {item.size} bytes)")
     except BaseException:
@@ -141,7 +148,7 @@ def finish(p: Pending) -> Result:
     network share the flush is where the time goes."""
     try:
         os.fsync(p.fout.fileno())
-        _fadvise(p.fout.fileno(), "POSIX_FADV_DONTNEED")
+        _fadvise(p.fout, "POSIX_FADV_DONTNEED")
         p.fout.close()
         os.utime(p.tmp, (p.item.mtime, p.item.mtime))
         os.replace(p.tmp, p.dst)
@@ -158,8 +165,8 @@ def copy_file(item: Item, dest_root: str, *, want_hash: bool = True, progress=No
                              cancel=cancel, chunk=chunk))
 
 
-def _stream(fin, fout, h, edges, progress, cancel, chunk, rel) -> int:
-    if 0 < os.fstat(fin.fileno()).st_size <= chunk:
+def _stream(fin, fout, h, edges, progress, cancel, chunk, rel, size) -> int:
+    if 0 < size <= chunk:
         # small file: no thread
         data = _read_all(fin, rel)
         _write_all(fout, memoryview(data), rel)
@@ -269,8 +276,8 @@ def hash_file(path: str, *, progress=None, cancel: threading.Event | None = None
     h = xxhash.xxh3_128()
     try:
         with open(path, "rb", buffering=0) as f:
-            _fadvise(f.fileno(), "POSIX_FADV_DONTNEED")
-            _fadvise(f.fileno(), "POSIX_FADV_SEQUENTIAL")
+            _fadvise(f, "POSIX_FADV_DONTNEED")
+            _fadvise(f, "POSIX_FADV_SEQUENTIAL")
             buf = bytearray(chunk)
             while True:
                 if cancel is not None and cancel.is_set():
