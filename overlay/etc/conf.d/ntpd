@@ -1,1 +1,1 @@
-NTPD_OPTS="-N -p pool.ntp.org"
+NTPD_OPTS="-N -p pool.ntp.org -S /usr/local/sbin/ingest-ntp-sync"

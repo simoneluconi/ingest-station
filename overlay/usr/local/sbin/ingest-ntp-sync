@@ -1,0 +1,8 @@
+#!/bin/sh
+# Called by busybox ntpd (-S): after a time step, a stratum change and every
+# 11 minutes. Keep the hardware clock in sync so that the station has the
+# right time after a power cut even before the network is up.
+case "$1" in
+step|stratum|periodic) hwclock -w -u 2>/dev/null ;;
+esac
+exit 0

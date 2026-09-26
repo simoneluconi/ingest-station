@@ -1,0 +1,2 @@
+# the RTC keeps UTC; it is updated after every NTP sync (ingest-ntp-sync)
+clock="UTC"
