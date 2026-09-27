@@ -3,7 +3,8 @@ official Alpine initramfs. The kernel unpacks both into the same rootfs, so
 files here add to or replace the official ones:
 
 - /init, patched with a one-line hook that sources /ingest/early.sh
-- /ingest/early.sh (slot selection + watchdog)
+- /ingest/early.sh (slot selection + watchdog + background driver loading)
+- /init also waits for the background drivers before switch_root
 - extra kernel modules and the full modules.* index from the modloop
 - /etc/modprobe.d/ingest-wyse.conf (dw_dmac blacklist)
 """
@@ -31,16 +32,30 @@ HOOK_REPLACEMENT = (
 )
 
 
+# the final switch_root (an indented one, for another boot mode, comes first)
+SWITCH_ANCHOR = '\nexec switch_root $switch_root_opts $sysroot $chart_init "$KOPT_init" $KOPT_init_args\n'
+# early.sh loads slow drivers (i915) in the background while /init installs
+# the packages; they must be loaded before switch_root frees the initramfs
+# holding the module files.
+SWITCH_REPLACEMENT = (
+    "\n# ingest-station: wait for the drivers loaded in the background\n"
+    '[ -n "$ingest_bg_pid" ] && wait "$ingest_bg_pid"'
+    + SWITCH_ANCHOR
+)
+
+
 class InitrdError(Exception):
     pass
 
 
 def patch_init(init_text: str) -> str:
-    if init_text.count(HOOK_ANCHOR) != 1:
-        raise InitrdError(
-            "Alpine /init changed: hook anchor not found exactly once; "
-            "review buildlib/initrd.py for this Alpine release")
-    return init_text.replace(HOOK_ANCHOR, HOOK_REPLACEMENT, 1)
+    for anchor in (HOOK_ANCHOR, SWITCH_ANCHOR):
+        if init_text.count(anchor) != 1:
+            raise InitrdError(
+                "Alpine /init changed: hook anchor not found exactly once; "
+                "review buildlib/initrd.py for this Alpine release")
+    init_text = init_text.replace(HOOK_ANCHOR, HOOK_REPLACEMENT, 1)
+    return init_text.replace(SWITCH_ANCHOR, SWITCH_REPLACEMENT, 1)
 
 
 def module_closure(modules_dep: str, wanted: list[str]) -> list[str]:
@@ -73,8 +88,10 @@ def module_closure(modules_dep: str, wanted: list[str]) -> list[str]:
 
 def build(base_entries: list[cpio.Entry], modloop: SquashFS, kver: str,
           extra_modules: list[str], early_sh: bytes,
-          modprobe_conf: bytes) -> tuple[bytes, list[str]]:
-    """Return (gzip'd cpio, list of modules added)."""
+          modprobe_conf: bytes,
+          background_modules: list[str] = ()) -> tuple[bytes, list[str]]:
+    """Return (gzip'd cpio, list of modules added). `background_modules` are
+    added too, and listed in /ingest/background-modules for early.sh."""
     names = {e.name: e for e in base_entries}
     init = names.get("init")
     if init is None:
@@ -93,9 +110,17 @@ def build(base_entries: list[cpio.Entry], modloop: SquashFS, kver: str,
     w.file("init", patched.encode(), 0o755)
     w.file("ingest/early.sh", early_sh, 0o644)
     w.file("etc/modprobe.d/ingest-wyse.conf", modprobe_conf, 0o644)
+    if background_modules:
+        w.file("ingest/background-modules",
+               "".join(f"{m}\n" for m in background_modules).encode(), 0o644)
+        # the boot media scan (nlplug-findfs) loads the drivers of every
+        # device it sees, synchronously: keep it off these, early.sh loads
+        # them by name (which ignores the blacklist). Initramfs only.
+        w.file("etc/modprobe.d/ingest-background.conf",
+               "".join(f"blacklist {m}\n" for m in background_modules).encode(), 0o644)
 
     added = []
-    for rel in module_closure(modules_dep, extra_modules):
+    for rel in module_closure(modules_dep, list(extra_modules) + list(background_modules)):
         path = f"{moddir}/{rel}"
         if path in names:
             continue

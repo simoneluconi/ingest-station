@@ -15,5 +15,6 @@ export PYGAME_HIDE_SUPPORT_PROMPT=1
 
 depend() {
 	need ingestd
-	after ingest-console
+	# before the network: the GUI shows the address when it comes
+	before ingest-network
 }

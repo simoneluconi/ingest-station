@@ -28,9 +28,10 @@ start() {
 		/usr/local/sbin/ingest-issue
 	else
 		# one quick attempt, then keep trying in the background: the link
-		# often comes up seconds later and must not delay the boot
-		udhcpc -b -t 1 -T 1 -A 3 -R -p /run/udhcpc.$IFACE.pid -i "$IFACE" \
-			-x hostname:ingest -s /usr/local/sbin/ingest-udhcpc
+		# often comes up seconds later and must not delay the boot. Its
+		# messages ("failed to get a DHCP lease") go to syslog, not the screen.
+		udhcpc -b -S -t 1 -T 1 -A 3 -R -p /run/udhcpc.$IFACE.pid -i "$IFACE" \
+			-x hostname:ingest -s /usr/local/sbin/ingest-udhcpc >/dev/null 2>&1
 	fi
 	eend 0
 }

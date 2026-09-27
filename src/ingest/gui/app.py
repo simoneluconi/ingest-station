@@ -376,7 +376,7 @@ class App:
         if self.screenshot:
             self.screenshot = False
             try:
-                pygame.image.save(self.surf, SCREENSHOT)
+                gfx.save_png(self.surf, SCREENSHOT)
             except Exception:  # noqa: BLE001
                 pass
 

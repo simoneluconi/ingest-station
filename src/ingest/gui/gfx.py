@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import collections
 import math
+import struct
+import zlib
 
 import pygame
 import pygame.freetype
@@ -365,3 +367,23 @@ def qr(surf, data: str, rect, dark, light) -> None:
         for x, v in enumerate(row):
             if v:
                 pygame.draw.rect(surf, dark, (ox + (x + 4) * cell, oy + (y + 4) * cell, cell, cell))
+
+
+PNG_SIGNATURE = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10])
+
+
+def save_png(surf: pygame.Surface, path: str) -> None:
+    """Write `surf` as a PNG (pygame's PNG support needs SDL2_image, which
+    is not installed)."""
+    w, h = surf.get_size()
+    rgb = pygame.image.tobytes(surf, "RGB")
+    row = w * 3
+    raw = b"".join(bytes(1) + rgb[y * row:(y + 1) * row] for y in range(h))  # filter 0
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    with open(path, "wb") as f:
+        f.write(PNG_SIGNATURE
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))

@@ -18,12 +18,20 @@ def test_cpio_roundtrip():
     assert entries["init"].mode & 0o777 == 0o755
 
 
+SWITCH = 'exec switch_root $switch_root_opts $sysroot $chart_init "$KOPT_init" $KOPT_init_args\n'
+
+
 def test_patch_init():
-    init = 'x\n\t$repoopts -a "$ROOT"/tmp/apkovls\neend $?\n# Setup network\n'
+    init = ('x\n\t$repoopts -a "$ROOT"/tmp/apkovls\neend $?\n# Setup network\n'
+            "if x; then\n\t" + SWITCH + "fi\n" + SWITCH)
     out = initrd.patch_init(init)
     # the hook runs before eend, which would otherwise drop to the recovery shell
     assert out.index(". /ingest/early.sh") < out.index("eend $ingest_rc") < out.index("# Setup network")
     assert "eend $?" not in out
+    # the background drivers are waited for before the final switch_root only
+    wait = 'wait "$ingest_bg_pid"'
+    assert out.count(wait) == 1
+    assert out.index("\t" + SWITCH) < out.index(wait) < out.rindex(SWITCH)
     with pytest.raises(initrd.InitrdError):
         initrd.patch_init("something else")
     with pytest.raises(initrd.InitrdError):

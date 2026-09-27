@@ -63,6 +63,13 @@ class Overlay:
                     data = f.read()
                 if os.path.splitext(name)[1] in TEXT_SUFFIXES and b"\r\n" in data:
                     raise OverlayError(f"{target}: CRLF line endings (check .gitattributes)")
+                if name.endswith(".py"):
+                    # a module that does not even compile would only show up
+                    # on the station, as a service that keeps restarting
+                    try:
+                        compile(data, target, "exec")
+                    except (SyntaxError, ValueError) as e:
+                        raise OverlayError(f"{target}: does not compile: {e}") from None
                 mode = mode_for(target) if mode_for else default_mode(target)
                 self.file(target, data, mode)
 

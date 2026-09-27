@@ -8,6 +8,10 @@
 #    /slots/<ingest_slot>/ on it. Slots are deeper than Alpine's automatic
 #    .boot_repository search, so the other slot is never picked up.
 #
+# 3. Starts loading the slow drivers listed in /ingest/background-modules
+#    (i915) in the background, while /init installs the packages; the
+#    patched /init waits for $ingest_bg_pid before switch_root.
+#
 # Sets ingest_slot_ok=1 when the slot was found; /init then treats the boot
 # media scan as successful. Without ingest_slot= on the command line this
 # file does nothing.
@@ -73,8 +77,13 @@ ingest_find_media() {
 	return 1
 }
 
+ingest_bg_pid=
 if [ -n "$ingest_slot" ]; then
 	ingest_arm_watchdog
+	if [ -s /ingest/background-modules ]; then
+		( for _m in $(cat /ingest/background-modules); do modprobe -q "$_m"; done ) &
+		ingest_bg_pid=$!
+	fi
 	if _dev=$(ingest_find_media); then
 		_mnt=/media/${_dev##*/}
 		if ! grep -q " $_mnt " /proc/mounts; then

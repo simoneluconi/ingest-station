@@ -1,7 +1,7 @@
 #!/bin/sh
 # dev: send navigation commands to the GUI and fetch a screenshot
 # usage: tools/shot.sh OUT.png [command ...]
-HOST=${WYSE:-192.168.3.199}
+HOST=${WYSE:-ingest.local}
 OUT=$1; shift
 CMDS=$(printf '%s\n' "$@")
 .venv/Scripts/python tools/wyse.py sh "$HOST" "printf '%s' '$CMDS' > /tmp/ingest-gui.cmd; P=\$(pgrep -f 'python3 /usr/local/sbin/ingest-gui' | head -1); [ -n \"$*\" ] && kill -USR2 \$P; sleep 1; rm -f /tmp/ingest-gui.png; kill -USR1 \$P; sleep 2; ls /tmp/ingest-gui.png >/dev/null" >/dev/null && .venv/Scripts/python -c "

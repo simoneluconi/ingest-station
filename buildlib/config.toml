@@ -21,6 +21,11 @@ initramfs_modules = [
 # watchdog drivers: the Wyse 3040 exposes its watchdog through the ACPI WDAT
 # table (wdat_wdt); iTCO_wdt covers other Intel chipsets (and QEMU q35)
 extra_initrd_modules = ["wdat_wdt", "iTCO_wdt", "lpc_ich"]
+# also copied into ingest-initrd.gz, and loaded in the background while the
+# packages are installed: i915 alone takes ~3.5 s on the Wyse 3040, which
+# hwdrivers would otherwise spend later, before the GUI can start.
+# Harmless where the device is missing (modprobe just fails).
+background_initrd_modules = ["i915"]
 cmdline = [
   "quiet", "loglevel=3",
   "consoleblank=0",                                  # quirk: display does not wake up
@@ -59,7 +64,7 @@ system = [
   "cifs-utils",     # SMB destination
   "libgphoto2",     # cameras and phones over PTP/MTP (ctypes, no FUSE)
   # GUI: pygame's runtime libraries (pygame itself is vendored, see below)
-  "sdl2", "sdl2_image", "sdl2_mixer", "sdl2_ttf", "freetype", "libpng", "portmidi",
+  "sdl2", "sdl2_ttf", "freetype", "libpng",
 ]
 
 [vendor]
@@ -68,8 +73,12 @@ system = [
 # optionally: pygame declares numpy (+ openblas, ~69 MiB in RAM) for
 # surfarray, which the GUI does not use. The packages are verified like all
 # the others and build.py checks that every other dependency is installed.
+# Also skipped, to install fewer packages at every boot: sound (sdl2_mixer
+# with its codecs), MIDI (portmidi) and image formats beyond BMP
+# (sdl2_image; screenshots are written as PNG by the GUI itself). pygame
+# imports these modules optionally.
 apk = ["py3-pygame", "py3-pygame-pyc"]
-skip_deps = ["py3-numpy"]
+skip_deps = ["py3-numpy", "sdl2_mixer", "sdl2_image", "portmidi"]
 
 [assets]
 # font faces extracted from this (verified) Alpine package
