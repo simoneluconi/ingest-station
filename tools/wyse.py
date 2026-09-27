@@ -146,6 +146,37 @@ def deploy(host: str, slot_dir: str, tries: int = 3, reboot: bool = True,
             client = wait_for_ssh(host, wait)
 
 
+def push(host: str, restart: list[str]) -> int:
+    """Development shortcut: copy the application code into the running
+    system (it lives in RAM: a reboot restores the installed version) and
+    restart the given services. Real updates go through `deploy`."""
+    client = connect(host)
+    sftp = client.open_sftp()
+    pairs = [(os.path.join(ROOT, "src", "ingest"), "/opt/ingest/ingest"),
+             (os.path.join(ROOT, "installer"), "/opt/ingest/installer")]
+    for sub in ("etc/init.d", "usr/local/bin", "usr/local/sbin"):
+        pairs.append((os.path.join(ROOT, "overlay", *sub.split("/")), "/" + sub))
+    n = 0
+    for local_root, remote_root in pairs:
+        for dirpath, dirnames, files in os.walk(local_root):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            rel = os.path.relpath(dirpath, local_root).replace(os.sep, "/")
+            rdir = remote_root if rel == "." else f"{remote_root}/{rel}"
+            run(client, f"mkdir -p '{rdir}'", echo=False)
+            for f in files:
+                if f.endswith(".pyc"):
+                    continue
+                sftp.put(os.path.join(dirpath, f), f"{rdir}/{f}")
+                if remote_root.startswith(("/etc/init.d", "/usr/local")):
+                    sftp.chmod(f"{rdir}/{f}", 0o755)
+                n += 1
+    sftp.close()
+    print(f"pushed {n} files")
+    for svc in restart:
+        run(client, f"rc-service {svc} restart 2>&1 | tail -2")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingest Station over SSH")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -159,12 +190,17 @@ def main() -> int:
     d.add_argument("--slot", default=DEFAULT_SLOT, help="built slot to send (default dist/usb)")
     d.add_argument("--tries", type=int, default=3)
     d.add_argument("--no-reboot", action="store_true")
+    pu = sub.add_parser("push", help="dev: copy the code into the running system")
+    pu.add_argument("host")
+    pu.add_argument("--restart", nargs="*", default=[], metavar="SERVICE")
     a = p.parse_args()
     try:
         if a.cmd == "sh":
             return run(connect(a.host), a.command)[0]
         if a.cmd == "status":
             return run(connect(a.host), "ingest-slot status")[0]
+        if a.cmd == "push":
+            return push(a.host, a.restart)
         return deploy(a.host, a.slot, a.tries, not a.no_reboot)
     except (DeployError, paramiko.SSHException, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
