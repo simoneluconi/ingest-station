@@ -317,6 +317,14 @@ def health_problems(cmdline: dict[str, str]) -> list[str]:
                 problems.append("ingestd does not answer")
     except Exception as e:  # noqa: BLE001 - any failure means unhealthy
         problems.append(f"ingestd: {e}")
+    # the GUI must be running too (it writes a heartbeat every 5 s)
+    if os.path.exists("/etc/runlevels/default/ingest-gui"):
+        try:
+            age = time.time() - os.path.getmtime("/run/ingest-gui.alive")
+        except OSError:
+            age = None
+        if age is None or age > 20:
+            problems.append("the GUI is not running")
     return problems
 
 

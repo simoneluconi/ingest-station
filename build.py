@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from buildlib import apk, cpio, initrd, sshkey  # noqa: E402
+from buildlib import apk, assets, cpio, initrd, sshkey  # noqa: E402
 from buildlib.iso9660 import ISO9660  # noqa: E402
 from buildlib.overlay import Overlay  # noqa: E402
 from buildlib.squashfs import SquashFS  # noqa: E402
@@ -46,7 +46,7 @@ RUNLEVELS = {
     "boot": ["modules", "sysctl", "hostname", "bootmisc", "syslog", "hwclock",
              "ingest-watchdog", "ingest-data"],
     "default": ["ingest-network", "ingest-console", "avahi-daemon", "ntpd", "ingest-sshkeys",
-                "sshd", "ingestd", "ingest-bootok"],
+                "sshd", "ingestd", "ingest-gui", "ingest-bootok"],
     "shutdown": ["mount-ro", "killprocs", "savecache"],
 }
 TIMEZONE = "Europe/Rome"
@@ -252,6 +252,28 @@ def vendor_packages(cfg: dict, fx: Fetcher, resolver: apk.Resolver,
     return out
 
 
+def gui_assets(cfg: dict, fx: Fetcher, resolver: apk.Resolver) -> dict[str, tuple[bytes, int]]:
+    """Inter font faces and vendored wheels for the GUI."""
+    a = cfg.get("assets", {})
+    out: dict[str, tuple[bytes, int]] = {}
+    if a.get("font_package"):
+        raw = fetch_package(cfg, fx, resolver.by_name[a["font_package"]])
+        tar = apk.apk_data_members(raw)
+        ttc = next((tar.extractfile(m).read() for m in tar.getmembers()
+                    if m.isfile() and m.name.endswith(".ttc")), None)
+        if ttc is None:
+            raise BuildError(f"{a['font_package']}: no font collection found")
+        for name, data in assets.inter_fonts(ttc).items():
+            out[f"opt/ingest/assets/fonts/{name}"] = (data, 0o644)
+        out["opt/ingest/assets/fonts/LICENSE-Inter.txt"] = (assets.FONT_NOTE, 0o644)
+    for w in a.get("wheel", []):
+        path = fx.get(w["url"], os.path.join(CACHE, "wheels", w["url"].rsplit("/", 1)[1]))
+        for name, data in assets.wheel_files(open(path, "rb").read(), w["sha256"],
+                                             w["package"]).items():
+            out[f"opt/ingest/vendor/{name}"] = (data, 0o644)
+    return out
+
+
 def build_overlay(world: list[str], mtime: int, vendored: dict | None = None) -> bytes:
     ov = Overlay(mtime=mtime)
     ov.add_tree(os.path.join(ROOT, "overlay"))
@@ -369,6 +391,7 @@ def build_usb(args) -> None:
 
     say("[6/7] System overlay")
     vendored = vendor_packages(cfg, fx, resolver, selected)
+    vendored.update(gui_assets(cfg, fx, resolver))
     ovl = build_overlay(world, mtime, vendored)
     write(os.path.join(slot, "ingest.apkovl.tar.gz"), ovl)
     say(f"  ingest.apkovl.tar.gz: {len(ovl) // 1024} KiB")

@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# Full-screen interface on the monitor (KMS/DRM), a client of ingestd.
+# Restarted automatically; imports keep running if it ever stops.
+
+description="Ingest Station GUI"
+supervisor=supervise-daemon
+command=/usr/local/sbin/ingest-gui
+respawn_delay=2
+respawn_max=0
+# tracebacks end up here (in RAM, lost at reboot)
+error_log=/var/log/ingest-gui.log
+export SDL_VIDEODRIVER=dummy
+export SDL_AUDIODRIVER=dummy
+export PYGAME_HIDE_SUPPORT_PROMPT=1
+
+depend() {
+	need ingestd
+	after ingest-console
+}
