@@ -213,12 +213,16 @@ class Daemon:
 
     async def _slot_changed(self, key: str, disk: devices.Disk) -> None:
         await self._drop_slot(key, removed=False)
+        log.info("slot %s: %s, %d bytes, partitions %s", key, disk.name, disk.size,
+                 ",".join(disk.partitions) or "none")
         if not disk.has_media:
             self.sources[key] = Source(id=key, slot=key, disk=disk, status="empty",
                                        message="No card")
             self.changed()
             return
         vols = await asyncio.to_thread(devices.volumes, disk)
+        log.info("slot %s: volumes %s", key,
+                 ", ".join(f"{v.dev} ({v.fstype or '?'})" for v in vols) or "none")
         if not vols:
             self.sources[key] = Source(id=key, slot=key, disk=disk, status="unsupported",
                                        message="No readable file system")
@@ -238,6 +242,7 @@ class Daemon:
     async def _drop_slot(self, key: str, removed: bool) -> None:
         if removed:
             self._no_auto.discard(key)
+            log.info("slot %s: removed", key)
         for sid in [s for s, src in self.sources.items() if src.slot == key]:
             src = self.sources.pop(sid)
             src.cancel.set()
@@ -272,9 +277,12 @@ class Daemon:
                 return
             src.status = "scanning"
             self.changed()
+            t0 = time.monotonic()
             src.scan = await asyncio.to_thread(scanner.scan, src.mount, self.index, src.cancel)
             src.status = "ready"
             src.message = ""
+            log.info("source %s ready: %d files, %d new (scan %.1f s)", src.id,
+                     len(src.scan.files), src.scan.new_files, time.monotonic() - t0)
             self.changed()
             await self._maybe_auto_import(src)
         except asyncio.CancelledError:
