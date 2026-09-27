@@ -153,7 +153,8 @@ def test_index_lookup_history_and_interrupt(tmp_path):
     assert known["10:aaa"].dest_folder == "2026-09-26_1405_EOS_R6"  # earliest import
     assert idx.known_sizes() == {10, 20}
     assert idx.get_import(a)["files_done"] == 2 and idx.get_import(a)["bytes_done"] == 30
-    assert [h["id"] for h in idx.history(query="2026-09-27")] == [b]
+    # search by folder name (not by date: the imports are started "now")
+    assert [h["id"] for h in idx.history(query="_0900_")] == [b]
     assert idx.history(query="nothing-like-this") == []
     assert len(idx.history()) == 2
     idx.mark_verified(a, ["DCIM/A.CR3"])

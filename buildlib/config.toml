@@ -58,7 +58,18 @@ system = [
   "nfs-utils",      # NFS destination
   "cifs-utils",     # SMB destination
   "libgphoto2",     # cameras and phones over PTP/MTP (ctypes, no FUSE)
+  # GUI: pygame's runtime libraries (pygame itself is vendored, see below)
+  "sdl2", "sdl2_image", "sdl2_mixer", "sdl2_ttf", "freetype", "libpng", "portmidi",
 ]
+
+[vendor]
+# Alpine packages whose files are extracted into /opt/ingest/vendor instead
+# of being installed with apk, to skip a heavy dependency they only use
+# optionally: pygame declares numpy (+ openblas, ~69 MiB in RAM) for
+# surfarray, which the GUI does not use. The packages are verified like all
+# the others and build.py checks that every other dependency is installed.
+apk = ["py3-pygame", "py3-pygame-pyc"]
+skip_deps = ["py3-numpy"]
 
 [grub]
 # modules loaded at runtime from $prefix/x86_64-efi (not embedded in the

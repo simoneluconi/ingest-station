@@ -223,7 +223,36 @@ def kernel_cmdline(cfg: dict, watchdog: int) -> str:
     return " ".join([f"modules={','.join(k['initramfs_modules'])}", *k["cmdline"], *wdt])
 
 
-def build_overlay(world: list[str], mtime: int) -> bytes:
+def vendor_packages(cfg: dict, fx: Fetcher, resolver: apk.Resolver,
+                    selected: dict) -> dict[str, tuple[bytes, int]]:
+    """Files of the vendored packages (site-packages only), after checking
+    that each of their dependencies is satisfied by the installed set."""
+    v = cfg.get("vendor", {})
+    skip = set(v.get("skip_deps", []))
+    out: dict[str, tuple[bytes, int]] = {}
+    for name in v.get("apk", []):
+        pkg = resolver.by_name[name]
+        for dep in pkg.depends:
+            neg, dname = apk._dep_name(dep)
+            if neg or dname in skip or dname.startswith("python3"):
+                continue
+            try:
+                provider = resolver._pick(dname, selected)
+            except KeyError:
+                raise BuildError(f"vendored {name}: nothing provides {dname}")
+            if provider.name not in selected and not dname.startswith("py3-pygame"):
+                raise BuildError(f"vendored {name} needs {dname}: add {provider.name} "
+                                 "to [packages] system")
+        tar = apk.apk_data_members(fetch_package(cfg, fx, pkg))
+        for m in tar.getmembers():
+            marker = "/site-packages/"
+            if m.isfile() and marker in m.name:
+                rel = m.name.split(marker, 1)[1]
+                out[f"opt/ingest/vendor/{rel}"] = (tar.extractfile(m).read(), m.mode & 0o777)
+    return out
+
+
+def build_overlay(world: list[str], mtime: int, vendored: dict | None = None) -> bytes:
     ov = Overlay(mtime=mtime)
     ov.add_tree(os.path.join(ROOT, "overlay"))
     ov.dir("root", 0o700)
@@ -233,6 +262,8 @@ def build_overlay(world: list[str], mtime: int) -> bytes:
                                    os.path.join(ROOT, "keys", "authorized_keys")), 0o600)
     ov.add_tree(os.path.join(ROOT, "src", "ingest"), "opt/ingest/ingest", lambda p: 0o644)
     ov.add_tree(os.path.join(ROOT, "installer"), "opt/ingest/installer", lambda p: 0o644)
+    for path, (data, mode) in (vendored or {}).items():
+        ov.file(path, data, mode or 0o644)
     ov.file("opt/ingest/VERSION", f"{__version__}\n".encode())
     ov.file("etc/apk/world", ("\n".join(world) + "\n").encode())
     ov.symlink("etc/localtime", f"/usr/share/zoneinfo/{TIMEZONE}")
@@ -337,7 +368,8 @@ def build_usb(args) -> None:
     say(f"  GRUB runtime modules: {', '.join(sorted(n for n in mods if n.endswith('.mod')))}")
 
     say("[6/7] System overlay")
-    ovl = build_overlay(world, mtime)
+    vendored = vendor_packages(cfg, fx, resolver, selected)
+    ovl = build_overlay(world, mtime, vendored)
     write(os.path.join(slot, "ingest.apkovl.tar.gz"), ovl)
     say(f"  ingest.apkovl.tar.gz: {len(ovl) // 1024} KiB")
 
