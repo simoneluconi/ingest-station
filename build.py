@@ -182,6 +182,22 @@ def fetch_package(cfg: dict, fx: Fetcher, pkg: apk.Package) -> bytes:
     raise AssertionError
 
 
+def grub_skip_iso_search(efi: bytes) -> bytes:
+    """The ISO's GRUB image embeds an early config that looks for the ISO by
+    its label: on the station it scans every disk for a few seconds and
+    prints "error: no such device", then goes on with the device it was
+    loaded from anyway. Replace that line with a harmless command of the
+    same length (the embedded config keeps its size). Not a comment: this
+    config runs in GRUB's minimal parser, which has no comments
+    ("invalid command #")."""
+    found = re.findall(rb'search --no-floppy --set=root --label "[^"\n]*"\n', efi)
+    if len(found) != 1:
+        raise BuildError("BOOTX64.EFI: the embedded GRUB config was not found")
+    line = found[0]
+    noop = b"set ingest_root=boot_device"
+    return efi.replace(line, noop.ljust(len(line) - 1, b"_") + b"\n")
+
+
 def grub_modules(cfg: dict, fx: Fetcher, packages: dict, efi: bytes) -> dict[str, bytes]:
     """Runtime GRUB modules from the grub-efi package, after checking that
     the package is the same build as the ISO's BOOTX64.EFI."""
@@ -240,6 +256,8 @@ def vendor_packages(cfg: dict, fx: Fetcher, resolver: apk.Resolver,
                 provider = resolver._pick(dname, selected)
             except KeyError:
                 raise BuildError(f"vendored {name}: nothing provides {dname}")
+            if provider.name in skip:
+                continue
             if provider.name not in selected and not dname.startswith("py3-pygame"):
                 raise BuildError(f"vendored {name} needs {dname}: add {provider.name} "
                                  "to [packages] system")
@@ -322,7 +340,7 @@ def build_usb(args) -> None:
     base_initramfs = iso.read("/boot/initramfs-lts")
     base_entries = list(cpio.read_entries(gzip.decompress(base_initramfs)))
     kver = initrd.initramfs_kernel_version(base_entries)
-    efi = iso.read("/efi/boot/bootx64.efi")
+    efi = grub_skip_iso_search(iso.read("/efi/boot/bootx64.efi"))
     keys = {e.name.rsplit("/", 1)[1]: e.data for e in base_entries
             if e.name.startswith("etc/apk/keys/") and e.name.endswith(".pub")}
     modloop_off, _ = iso.offset("/boot/modloop-lts")
@@ -367,6 +385,7 @@ def build_usb(args) -> None:
     iso.extract("/boot/modloop-lts", os.path.join(slot, "modloop-lts"))
     extra, added = initrd.build(
         base_entries, modloop, kver, cfg["kernel"]["extra_initrd_modules"],
+        background_modules=cfg["kernel"].get("background_initrd_modules", []),
         early_sh=open(os.path.join(BOOT, "early.sh"), "rb").read(),
         modprobe_conf=open(os.path.join(ROOT, "overlay", "etc", "modprobe.d",
                                         "ingest-wyse.conf"), "rb").read())
