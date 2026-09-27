@@ -117,7 +117,7 @@ class ImportJob:
             vb = self.total_bytes - (self.done_bytes if self.phase == "verify" else 0)
             eta = (eta or 0) + vb / (self.verify_mbps * 1e6)
         self.report({
-            "phase": self.phase, "folder": self.folder,
+            "phase": self.phase, "folder": self.folder, "verify": self.verify,
             "files_done": self.done_files, "files_total": len(self.items),
             "bytes_done": self.done_bytes, "bytes_total": self.total_bytes,
             "percent": round(100 * self.done_bytes / self.total_bytes, 1) if self.total_bytes else 100.0,

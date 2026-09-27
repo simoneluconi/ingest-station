@@ -112,6 +112,7 @@ class Daemon:
         self._share_now = asyncio.Event()
         self._disk_sig: dict[str, tuple] = {}
         self._cam_sig: dict[str, tuple] = {}
+        self._no_auto: set[str] = set()     # slots rescanned after a cancelled import
         self.cameras: dict[str, object] = {}        # key -> ptp.Camera
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -235,6 +236,8 @@ class Daemon:
         self.changed()
 
     async def _drop_slot(self, key: str, removed: bool) -> None:
+        if removed:
+            self._no_auto.discard(key)
         for sid in [s for s, src in self.sources.items() if src.slot == key]:
             src = self.sources.pop(sid)
             src.cancel.set()
@@ -352,6 +355,9 @@ class Daemon:
             self.changed()
 
     async def _maybe_auto_import(self, src: Source) -> None:
+        if src.slot in self._no_auto:
+            self._no_auto.discard(src.slot)
+            return
         if not self.settings["auto_import"] or not src.scan or src.scan.new_files == 0:
             return
         src.status = "countdown"
@@ -442,6 +448,13 @@ class Daemon:
                 # release the card: it can be removed safely
                 await asyncio.to_thread(mounts.umount, src.mount)
                 src.mount = None
+            if src.status != "done" and self.sources.get(src.id) is src:
+                # cancelled or failed: scan again, so that the files copied so
+                # far are recognised; no automatic import right after that
+                self._no_auto.add(src.slot)
+                self._disk_sig.pop(src.slot, None)
+                self._cam_sig.pop(src.slot, None)
+                self._rescan.set()
             self.changed()
             self._kick()
 
@@ -558,6 +571,33 @@ class Daemon:
         if cmd == "history":
             return await asyncio.to_thread(self.index.history, int(args.get("limit", 50)),
                                            args.get("query", ""))
+        if cmd in ("system.reboot", "system.poweroff"):
+            prog = "reboot" if cmd == "system.reboot" else "poweroff"
+            asyncio.get_running_loop().call_later(1.5, lambda: subprocess.Popen([prog]))
+            return True
+        if cmd == "slots.status":
+            return await asyncio.to_thread(_slots_status)
+        if cmd == "slots.rollback":
+            if self.active_id:
+                raise ValueError("an import is running")
+            await asyncio.to_thread(_slots_rollback)
+            asyncio.get_running_loop().call_later(1.5, lambda: subprocess.Popen(["reboot"]))
+            return True
+        if cmd == "network.get":
+            return await asyncio.to_thread(config.read_network)
+        if cmd == "network.set":
+            net = await asyncio.to_thread(config.write_network, args)
+            subprocess.Popen(["rc-service", "ingest-network", "restart"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return net
+        if cmd == "web.set_pin":
+            pin = str(args.get("pin", ""))
+            if not (pin.isdigit() and 4 <= len(pin) <= 8):
+                raise ValueError("the PIN must have 4 to 8 digits")
+            self.settings = await asyncio.to_thread(
+                config.update, {"web": {"pin_hash": config.pin_hash(pin)}})
+            self.changed()
+            return True
         if cmd == "index.rebuild":
             if self.active_id:
                 raise ValueError("an import is running")
@@ -665,6 +705,23 @@ class Daemon:
         await self.uevents()
         await asyncio.gather(server.serve_forever(), self.publisher(), self.rescanner(),
                              self.share_monitor(), self.ip_monitor())
+
+
+def _slots_status() -> dict:
+    from ingest.common import slots
+    esp = slots.find_esp()
+    if not esp:
+        return {}
+    return slots.SlotManager(esp, sysfs.kernel_cmdline().get("ingest_slot")).status()
+
+
+def _slots_rollback() -> None:
+    from ingest.common import slots
+    esp = slots.find_esp()
+    if not esp:
+        raise ValueError("not running from the eMMC")
+    mgr = slots.SlotManager(esp, sysfs.kernel_cmdline().get("ingest_slot"))
+    mgr.set_active(slots.other(mgr.env().get("active_slot", "A")))
 
 
 def _close_quietly(cam) -> None:
