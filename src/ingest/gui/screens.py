@@ -73,12 +73,12 @@ STATUS_TITLE = {"error": "Cannot read this device", "unsupported": "Not supporte
 
 def link_speed(src: dict) -> tuple[str, bool]:
     """("5 Gbps", slow): the negotiated USB speed, and whether a USB 3 device
-    runs on a slower link (a USB 2 port, a loose plug)."""
+    in a USB 3 port runs on a slower link (USB 2 cable, loose plug)."""
     speed = src.get("usb_speed") or 0
     if not speed:
         return "", False
     label = f"{speed / 1000:g} Gbps" if speed >= 1000 else f"{speed:g} Mbps"
-    return label, bool(src.get("usb3")) and speed < 5000
+    return label, bool(src.get("usb_slow"))
 
 
 def draw_meta(cv: Canvas, src: dict, pos, max_w: int) -> None:

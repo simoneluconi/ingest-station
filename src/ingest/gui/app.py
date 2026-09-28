@@ -160,6 +160,10 @@ class App:
                 self.open_settings()
             elif ln == "screen:history":
                 self.open_history()
+            elif ln.startswith("msg:"):      # sample dialog: msg:error|ok|info
+                self.push(Message("Cannot start the import",
+                                  "the network share is offline: host unreachable",
+                                  ln[4:] if ln[4:] in ("error", "ok", "info") else "info"))
             elif ln.startswith("cat:") and isinstance(self.top(), Settings):
                 self.top()._select(self, ln[4:])
                 self.focus[id(self.top())] = ln

@@ -64,17 +64,21 @@ class Message(Screen):
         return False
 
     def draw(self, cv, rect):
+        """Centred, like the result screen: icon in a soft circle (as on the
+        tiles), title, message, OK."""
         s, c = cv.s, cv.c
-        box = _panel(cv, rect, s(1000), s(480))
-        col = {"ok": c["ok"], "error": c["err"], "info": c["accent"]}[self.kind]
+        box = _panel(cv, rect, s(1000), s(560))
+        tone = {"ok": "ok", "error": "err", "info": "accent"}[self.kind]
         icon = {"ok": "check", "error": "warning", "info": "dot"}[self.kind]
-        gfx.circle(cv.surf, (box.x + s(110), box.y + s(120)), s(52), col)
-        gfx.icon(cv.surf, icon, (box.x + s(110), box.y + s(120)), s(56), (255, 255, 255))
-        gfx.text(cv.surf, cv.t, self.title, (box.x + s(200), box.y + s(86)), "xl", c["text"],
-                 "semibold", max_w=box.w - s(260))
-        wrap(cv, self.message, pygame.Rect(box.x + s(200), box.y + s(170), box.w - s(260),
-                                           s(180)), "md", c["text2"], 4)
-        cv.button("ok", (box.right - s(360), box.bottom - s(150), s(300), s(100)), "OK",
+        cx = box.centerx
+        gfx.circle(cv.surf, (cx, box.y + s(110)), s(52), c[f"{tone}_soft"])
+        gfx.icon(cv.surf, icon, (cx, box.y + s(110)), s(60), c[tone])
+        gfx.text(cv.surf, cv.t, self.title, (cx, box.y + s(210)), "xl", c["text"], "semibold",
+                 "center", max_w=box.w - s(120), min_size="lg")
+        msg = self.message[:1].upper() + self.message[1:]
+        wrap(cv, msg, pygame.Rect(box.x + s(80), box.y + s(262), box.w - s(160), s(130)), "md",
+             c["text2"], 3, align="center")
+        cv.button("ok", (cx - s(170), box.bottom - s(140), s(340), s(100)), "OK",
                   lambda: cv.app.pop(self), "primary")
 
 

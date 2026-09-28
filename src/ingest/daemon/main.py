@@ -69,17 +69,17 @@ class Source:
             name = self.cam["model"]
             if st is not None and self.cam.get("count", 1) > 1:
                 name += f" - {st.description or st.label or 'slot ' + str(self.cam['n'] + 1)}"
-            speed, usb3 = devices.usb_link(self.cam.get("sysdir"))
+            speed, slow = devices.usb_link(self.cam.get("sysdir"))
             return {"name": name, "model": self.cam["model"], "vendor": self.cam["vendor"],
                     "serial": self.cam["serial"], "capacity": st.capacity if st else 0,
-                    "fs": "camera", "label": "", "usb_speed": speed, "usb3": usb3}
+                    "fs": "camera", "label": "", "usb_speed": speed, "usb_slow": slow}
         d = self.disk
         return {"name": devices.describe(d) if d else "", "model": d.model if d else "",
                 "vendor": d.vendor if d else "", "serial": d.serial if d else "",
                 "capacity": d.size if d else 0,
                 "fs": self.volume.fstype if self.volume else "",
                 "label": self.volume.label if self.volume else "",
-                "usb_speed": d.usb_speed if d else 0, "usb3": d.usb3 if d else False}
+                "usb_speed": d.usb_speed if d else 0, "usb_slow": d.usb_slow if d else False}
 
     def to_dict(self) -> dict:
         d = {"id": self.id, "slot": self.slot, "kind": self.kind, "status": self.status,

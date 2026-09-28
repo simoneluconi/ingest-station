@@ -40,7 +40,7 @@ class Disk:
     lun: str = ""
     partitions: list[str] = field(default_factory=list)
     usb_speed: int = 0        # negotiated link speed, Mbit/s (480, 5000...)
-    usb3: bool = False        # the device supports USB 3 (SuperSpeed)
+    usb_slow: bool = False    # USB 3 device and port, but a slower link
 
     @property
     def has_media(self) -> bool:
@@ -82,20 +82,26 @@ def usb_superspeed_capable(bos: bytes) -> bool:
 
 
 def usb_link(usb_dir: str | None) -> tuple[int, bool]:
-    """(negotiated speed in Mbit/s, USB 3 capable) of a USB device directory
-    in sysfs; (0, False) when unknown."""
+    """(negotiated speed in Mbit/s, slow) of a USB device directory in sysfs.
+    `slow`: both the device and the port it is plugged into support USB 3,
+    yet the link runs slower (USB 2 cable, loose plug, dirty contacts). A
+    USB 3 device in a USB 2-only port is not slow: that is all it can do.
+    A port supports USB 3 when it has a SuperSpeed peer port."""
     if not usb_dir:
         return 0, False
     try:
         speed = int(float(sysfs.read_text(f"{usb_dir}/speed", "0")))
     except ValueError:
         speed = 0
+    if speed >= 5000:
+        return speed, False
     try:
         with open(f"{usb_dir}/bos_descriptors", "rb") as f:
-            capable = usb_superspeed_capable(f.read())
+            device_usb3 = usb_superspeed_capable(f.read())
     except OSError:
-        capable = speed >= 5000
-    return speed, capable
+        device_usb3 = False
+    port_usb3 = os.path.exists(os.path.join(os.path.realpath(f"{usb_dir}/port"), "peer"))
+    return speed, device_usb3 and port_usb3
 
 
 def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[Disk]:
@@ -115,7 +121,7 @@ def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[
         parts = [p for p in sysfs.listdir(d)
                  if p.startswith(name) and os.path.exists(f"{d}/{p}/partition")]
         dev = f"{d}/device"
-        speed, usb3 = usb_link(usb)
+        speed, slow = usb_link(usb)
         out.append(Disk(
             name=name,
             devpath=real.replace(sys_root, "", 1) if real.startswith(sys_root) else real,
@@ -127,7 +133,7 @@ def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[
             lun=os.path.basename(os.path.realpath(dev)) if os.path.exists(dev) else "",
             partitions=parts,
             usb_speed=speed,
-            usb3=usb3,
+            usb_slow=slow,
         ))
     return out
 

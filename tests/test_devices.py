@@ -112,13 +112,32 @@ def test_usb_superspeed_capable():
     assert not devices.usb_superspeed_capable(bytes.fromhex("050f0c0001" "00"))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="sysfs symlinks")
 def test_usb_link(tmp_path):
+    # a USB 3 port has a SuperSpeed peer; a USB 2-only port has none
+    usb3_port = tmp_path / "usb1-port2"
+    usb3_port.mkdir()
+    (usb3_port / "peer").mkdir()
+    usb2_port = tmp_path / "usb1-port4"
+    usb2_port.mkdir()
     d = tmp_path / "1-2"
     d.mkdir()
     (d / "speed").write_text("480\n")
     (d / "bos_descriptors").write_bytes(KINGSTON_AT_480)
+    (d / "port").symlink_to(usb3_port)
+    # USB 3 stick, USB 3 port, 480 Mbit/s: a slow link (cable, contacts)
     assert devices.usb_link(str(d)) == (480, True)
-    (d / "bos_descriptors").unlink()
+    # the same stick in a USB 2-only port: 480 is all it can do
+    (d / "port").unlink()
+    (d / "port").symlink_to(usb2_port)
+    assert devices.usb_link(str(d)) == (480, False)
+    # a USB 2 device in a USB 3 port: fine
+    (d / "port").unlink()
+    (d / "port").symlink_to(usb3_port)
+    (d / "bos_descriptors").write_bytes(USB2_ONLY)
+    assert devices.usb_link(str(d)) == (480, False)
+    (d / "speed").write_text("5000\n")
+    assert devices.usb_link(str(d)) == (5000, False)
     (d / "speed").write_text("1.5\n")
     assert devices.usb_link(str(d)) == (1, False)
     assert devices.usb_link(None) == (0, False)
