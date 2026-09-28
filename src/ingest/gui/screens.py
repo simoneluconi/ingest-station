@@ -43,7 +43,9 @@ def when(ts) -> str:
         return f"today {d:%H:%M}"
     if (today - d.date()).days == 1:
         return f"yesterday {d:%H:%M}"
-    return f"{d:%d %b %Y %H:%M}"
+    if d.year == today.year:
+        return f"{d.day} {d:%b %H:%M}"
+    return f"{d.day} {d:%b %Y %H:%M}"
 
 
 def source_icon(src: dict) -> str:
@@ -64,6 +66,38 @@ STATUS_LABEL = {"empty": "No card", "detected": "Detected", "mounting": "Opening
                 "queued": "Queued", "importing": "Importing", "done": "Done",
                 "error": "Error", "unsupported": "Not supported", "update": "Update",
                 "installer": "Installer stick", "ejected": "Ejected"}
+# titles of the outcome block on a tile
+STATUS_TITLE = {"error": "Cannot read this device", "unsupported": "Not supported",
+                "update": "Update package found", "installer": "Installation stick"}
+
+
+def link_speed(src: dict) -> tuple[str, bool]:
+    """("5 Gbps", slow): the negotiated USB speed, and whether a USB 3 device
+    runs on a slower link (a USB 2 port, a loose plug)."""
+    speed = src.get("usb_speed") or 0
+    if not speed:
+        return "", False
+    label = f"{speed / 1000:g} Gbps" if speed >= 1000 else f"{speed:g} Mbps"
+    return label, bool(src.get("usb3")) and speed < 5000
+
+
+def draw_meta(cv: Canvas, src: dict, pos, max_w: int) -> None:
+    """"LABEL · EXFAT · 124 GB · 5 Gbps"; a slow USB link in amber."""
+    t, c, s = cv.t, cv.c, cv.s
+    parts = [src.get("label"),
+             (src.get("fs") or "").upper() if src.get("fs") not in ("", None, "camera") else "",
+             human(src["capacity"]) if src.get("capacity") else ""]
+    meta = " · ".join(x for x in parts if x)
+    speed, slow = link_speed(src)
+    x, y = pos
+    if meta:
+        r = gfx.text(cv.surf, t, meta + (" · " if speed else ""), (x, y), "sm", c["text2"],
+                     max_w=max_w)
+        x = r.right
+    if speed:
+        gfx.text(cv.surf, t, f"{speed} · slow link" if slow else speed, (x, y), "sm",
+                 c["warn"] if slow else c["text2"], "semibold" if slow else "regular",
+                 max_w=max(0, pos[0] + max_w - x))
 
 
 def eta_for(state: dict, nbytes: int, verify: str) -> float:
@@ -165,13 +199,8 @@ class Home(Screen):
                        color_key, anchor="topright")
         gfx.text(cv.surf, t, src.get("name") or "Device", (tx, inner.y + s(2)), "lg",
                  c["text"] if status != "empty" else c["text2"], "semibold",
-                 max_w=chip.x - tx - s(20))
-        meta = " · ".join(x for x in (src.get("label"), src.get("fs", "").upper()
-                                      if src.get("fs") and src.get("fs") != "camera" else "",
-                                      human(src["capacity"]) if src.get("capacity") else "") if x)
-        if meta:
-            gfx.text(cv.surf, t, meta, (tx, inner.y + s(58)), "sm", c["text2"],
-                     max_w=inner.right - tx)
+                 max_w=chip.x - tx - s(20), min_size="md")
+        draw_meta(cv, src, (tx, inner.y + s(58)), inner.right - tx)
         body = pygame.Rect(inner.x, badge.bottom + s(28), inner.w, inner.bottom - badge.bottom - s(28))
         self._tile_body(cv, body, src, st, big)
         app_act = (lambda sid=src["id"]: app.open_source(sid))
@@ -200,19 +229,13 @@ class Home(Screen):
                 if sm["known_files"]:
                     sub += f" · {sm['known_files']} already imported"
                 gfx.text(cv.surf, t, sub, (b.x, r.bottom + s(16)), "md", c["text2"],
-                         max_w=b.w)
+                         max_w=b.w, min_size="sm")
             else:
-                cy = b.y + b.h // 2 - s(30)
-                gfx.circle(cv.surf, (b.x + s(36), cy), s(36), c["ok_soft"])
-                gfx.icon(cv.surf, "check", (b.x + s(36), cy), s(44), c["ok"])
-                gfx.text(cv.surf, t, "Everything already imported", (b.x + s(96), cy), "lg",
-                         c["ok"], "semibold", "midleft", max_w=b.w - s(100))
                 last = (sm.get("previous") or [{}])[-1]
-                info = f"{sm['files']} files · {human(sm['bytes'])}"
-                if last.get("date"):
-                    info += f" · last import {when(last['date'])}"
-                gfx.text(cv.surf, t, info, (b.x + s(96), cy + s(58)), "md", c["text2"],
-                         max_w=b.w - s(100))
+                self._status_block(cv, b, "ok", "check", "Everything already imported",
+                                   f"{sm['files']} files · {human(sm['bytes'])}",
+                                   f"Last import {when(last['date'])}" if last.get("date")
+                                   else "")
             if status == "countdown" and src.get("countdown"):
                 gfx.text(cv.surf, t, f"Import starts in {src['countdown']} s",
                          (b.x, b.bottom), "md", c["warn"], "semibold", "bottomleft")
@@ -228,8 +251,8 @@ class Home(Screen):
             r = gfx.text(cv.surf, t, f"{int(pct)}%", (b.x, y), hero, c["accent"], "bold")
             phase = {"copy": "copying", "verify": "verifying", "finishing": "finishing",
                      "starting": "starting"}.get(a.get("phase", ""), a.get("phase", ""))
-            gfx.text(cv.surf, t, phase, (r.right + s(18), r.bottom - s(14)), "lg", c["text2"],
-                     "medium", "bottomleft")
+            gfx.text(cv.surf, t, phase, (r.right + s(18), gfx.baseline(t, r, hero, "bold")), "lg",
+                     c["text2"], "medium", "baseline")
             gfx.progress(cv.surf, (b.x, r.bottom + s(20), b.w, s(18)), t, pct / 100)
             if a.get("paused"):
                 info = "Paused: " + (a.get("error") or "")
@@ -240,23 +263,37 @@ class Home(Screen):
             gfx.text(cv.surf, t, info, (b.x, r.bottom + s(58)), "md", col, max_w=b.w)
         elif status == "done":
             res = src.get("result") or {}
-            gfx.icon(cv.surf, "check", (b.x + s(30), b.y + s(40)), s(52), c["ok"])
-            gfx.text(cv.surf, t, src.get("message") or "Done", (b.x + s(76), b.y + s(40)), "lg",
-                     c["ok"], "semibold", "midleft", max_w=b.w - s(80))
-            if res:
-                gfx.text(cv.surf, t, f"{res.get('files', 0)} files · {human(res.get('bytes'))}"
-                         f" → {res.get('folder', '')}", (b.x, b.y + s(100)), "md", c["text2"],
-                         max_w=b.w)
+            self._status_block(cv, b, "ok", "check", "Import complete",
+                               f"{res.get('files', 0)} files · {human(res.get('bytes'))} → "
+                               f"{res.get('folder', '')}" if res else "",
+                               src.get("message") or "")
         elif status == "ejected":
-            gfx.icon(cv.surf, "check", (b.x + s(30), b.centery), s(52), c["ok"])
-            gfx.text(cv.surf, t, "You can remove it", (b.x + s(76), b.centery), "lg", c["ok"],
-                     "semibold", "midleft")
+            self._status_block(cv, b, "ok", "check", "Safe to remove", "",
+                               src.get("message") or "")
         else:   # error, unsupported, update, installer
-            col = c[STATUS_COLOR.get(status, "text2")]
-            gfx.icon(cv.surf, "warning" if status in ("error", "unsupported") else "update",
-                     (b.x + s(30), b.y + s(36)), s(52), col)
-            wrap(cv, src.get("message") or STATUS_LABEL.get(status, status),
-                 pygame.Rect(b.x + s(76), b.y + s(6), b.w - s(76), b.h), "md", col, 3)
+            tone = {"error": "err", "unsupported": "warn"}.get(status, "accent")
+            self._status_block(cv, b, tone,
+                               "warning" if status in ("error", "unsupported") else "update",
+                               STATUS_TITLE.get(status, STATUS_LABEL.get(status, status)),
+                               src.get("message") or "")
+
+    def _status_block(self, cv: Canvas, b: pygame.Rect, tone: str, icon: str, title: str,
+                      line1: str = "", line2: str = "") -> None:
+        """The one layout for a tile's outcome (done, nothing new, ejected,
+        errors): icon in a soft circle, title in the tone's colour, a detail
+        line (up to 2 lines) and a quieter hint line."""
+        t, c, s = cv.t, cv.c, cv.s
+        x, w = b.x + s(96), b.w - s(100)
+        cy = b.y + b.h // 2 - s(30)
+        gfx.circle(cv.surf, (b.x + s(36), cy), s(36), c[f"{tone}_soft"])
+        gfx.icon(cv.surf, icon, (b.x + s(36), cy), s(44), c[tone])
+        gfx.text(cv.surf, t, title, (x, cy), "lg", c[tone], "semibold", "midleft",
+                 max_w=w, min_size="md")
+        y = cy + s(30)
+        if line1:
+            y += wrap(cv, line1, pygame.Rect(x, y, w, s(100)), "md", c["text2"], 2) + s(4)
+        if line2:
+            gfx.text(cv.surf, t, line2, (x, y), "sm", c["text3"], max_w=w, min_size="xs")
 
 
 def self_share_name(share: dict) -> str:
@@ -363,12 +400,7 @@ class SourceScreen(Screen):
         gfx.text(cv.surf, t, src.get("name") or "Device", (badge.right + s(26), badge.centery
                                                            + s(6)),
                  "xl", c["text"], "semibold", "bottomleft", max_w=area.w - s(800))
-        meta = " · ".join(x for x in (src.get("label"), (src.get("fs") or "").upper()
-                                      if src.get("fs") not in ("", "camera") else "",
-                                      human(src.get("capacity")) if src.get("capacity") else "")
-                          if x)
-        gfx.text(cv.surf, t, meta, (badge.right + s(28), badge.centery + s(6)), "sm",
-                 c["text2"])
+        draw_meta(cv, src, (badge.right + s(28), badge.centery + s(6)), area.w - s(800))
         cv.chip((area.right, badge.centery), STATUS_LABEL.get(src["status"], src["status"]),
                 STATUS_COLOR.get(src["status"], "accent"), anchor="midright")
         body = pygame.Rect(area.x, area.y + s(130), area.w, area.h - s(130))
@@ -435,7 +467,7 @@ class SourceScreen(Screen):
                      f"({human(sm['known_bytes'])})", (x, yy), "md", c["text"], "semibold")
             yy += s(62)
             for p in sm.get("previous", [])[:2]:
-                used = wrap(cv, f"{p['files']} files on {when(p['date'])} into {p['folder']}",
+                used = wrap(cv, f"{p['files']} files · {when(p['date'])} → {p['folder']}",
                             pygame.Rect(x, yy, left.w - s(104), s(120)), "sm", c["text2"], 2)
                 yy += used + s(18)
         else:
@@ -539,20 +571,32 @@ class ProgressScreen(Screen):
         steps.append(("finishing", "Finish"))
         order = [k for k, _ in steps]
         cur = order.index(phase) if phase in order else (1 if phase == "starting" else 1)
-        x = area.right
-        for i in range(len(steps) - 1, -1, -1):
-            k, label = steps[i]
-            done = i < cur
-            active = i == cur
-            col = c["ok"] if done else c["accent"] if active else c["text3"]
-            w = gfx.text_width(t, label, "sm", "semibold") + s(64)
-            r = pygame.Rect(x - w, area.y + s(20), w, s(56))
-            gfx.rrect(cv.surf, r, c["ok_soft"] if done else c["accent_soft"] if active
-                      else c["surface2"], s(28))
-            gfx.icon(cv.surf, "check" if done else "dot", (r.x + s(28), r.centery), s(26), col)
-            gfx.text(cv.surf, t, label, (r.x + s(50), r.centery), "sm", col, "semibold",
-                     "midleft")
-            x = r.x - s(14)
+        # stepper: numbered circles joined by a line, on the title's line
+        d, gap, link = s(46), s(14), s(64)
+        widths = [d + gap + gfx.text_width(t, label, "sm", "semibold") for _, label in steps]
+        x = area.right - sum(widths) - link * (len(steps) - 1)
+        cy = area.y + s(68)
+        for i, (_, label) in enumerate(steps):
+            done, active = i < cur, i == cur
+            center = (x + d // 2, cy)
+            if done:
+                gfx.circle(cv.surf, center, d // 2, c["ok"])
+                gfx.icon(cv.surf, "check", center, s(28), c["on_ok"])
+            elif active:
+                gfx.circle(cv.surf, center, d // 2, c["accent"])
+                gfx.text(cv.surf, t, str(i + 1), center, "sm", c["on_accent"], "bold", "center")
+            else:
+                gfx.circle(cv.surf, center, d // 2, c["border"])
+                gfx.circle(cv.surf, center, d // 2 - s(3), c["bg"])
+                gfx.text(cv.surf, t, str(i + 1), center, "sm", c["text3"], "semibold", "center")
+            col = c["ok"] if done else c["text"] if active else c["text3"]
+            gfx.text(cv.surf, t, label, (x + d + gap, cy), "sm", col,
+                     "bold" if active else "semibold", "midleft")
+            x += widths[i]
+            if i < len(steps) - 1:
+                pygame.draw.line(cv.surf, c["ok"] if done else c["border"],
+                                 (x + s(14), cy), (x + link - s(14), cy), s(3))
+                x += link
         # hero card
         card = pygame.Rect(area.x, area.y + s(130), area.w, s(410))
         gfx.card(cv.surf, card, t, s(36))
@@ -594,7 +638,7 @@ class ProgressScreen(Screen):
             gfx.card(cv.surf, r2, t, s(28))
             gfx.text(cv.surf, t, k, (r2.x + s(32), r2.y + s(24)), "xs", c["text3"], "semibold")
             gfx.text(cv.surf, t, v, (r2.x + s(32), r2.y + s(58)), "lg", c["text"], "semibold",
-                     max_w=r2.w - s(64))
+                     max_w=r2.w - s(64), min_size="sm")
             if sub:
                 gfx.text(cv.surf, t, sub, (r2.x + s(32), r2.y + s(118)), "sm", c["text2"],
                          max_w=r2.w - s(64))
@@ -686,10 +730,8 @@ class ResultScreen(Screen):
         gfx.circle(cv.surf, (cx, rect.y + s(240)), s(120), main)
         gfx.icon(cv.surf, "check" if ok else "cross", (cx, rect.y + s(240)), s(130),
                  c.get(f"on_{tone}", (255, 255, 255)))
-        title = "You can remove the card" if ok else ("Import cancelled" if cancelled
-                                                      else "Import failed")
-        if ok and r.get("source", "").startswith("cam:"):
-            title = "You can disconnect the camera"
+        title = "Import complete" if ok else ("Import cancelled" if cancelled
+                                              else "Import failed")
         gfx.text(cv.surf, t, title, (cx, rect.y + s(440)), "xxl", main, "bold", "center")
         name = r.get("name", "")
         line = f"{name}: {r.get('files', 0)} files · {human(r.get('bytes'))}"
@@ -702,6 +744,11 @@ class ResultScreen(Screen):
         if r.get("folder"):
             gfx.text(cv.surf, t, f"Folder: {r['folder']}", (cx, rect.y + s(606)), "md",
                      c["text2"], anchor="center", max_w=rect.w - s(200))
+        if ok:
+            hint = ("You can disconnect the camera" if r.get("source", "").startswith("cam:")
+                    else "You can remove the card")
+            gfx.text(cv.surf, t, hint, (cx, rect.y + s(690)), "lg", main, "semibold",
+                     "center")
         if not ok and r.get("error"):
             msg = r["error"]
             if cancelled:

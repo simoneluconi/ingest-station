@@ -39,6 +39,8 @@ class Disk:
     usb_port: str = ""        # e.g. 1-1.2
     lun: str = ""
     partitions: list[str] = field(default_factory=list)
+    usb_speed: int = 0        # negotiated link speed, Mbit/s (480, 5000...)
+    usb3: bool = False        # the device supports USB 3 (SuperSpeed)
 
     @property
     def has_media(self) -> bool:
@@ -67,6 +69,35 @@ def _usb_ancestor(real: str) -> str | None:
         path = parent
 
 
+def usb_superspeed_capable(bos: bytes) -> bool:
+    """True if a BOS descriptor set lists a SuperSpeed (USB 3) capability.
+    A USB 3 device running at USB 2 speed reports bcdUSB 2.10, so the
+    version alone cannot tell; the BOS capabilities can."""
+    i = bos[0] if bos else 0          # skip the BOS header descriptor
+    while i + 2 < len(bos) and bos[i] > 0:
+        if bos[i + 1] == 0x10 and bos[i + 2] in (0x03, 0x0A):   # SuperSpeed, SuperSpeedPlus
+            return True
+        i += bos[i]
+    return False
+
+
+def usb_link(usb_dir: str | None) -> tuple[int, bool]:
+    """(negotiated speed in Mbit/s, USB 3 capable) of a USB device directory
+    in sysfs; (0, False) when unknown."""
+    if not usb_dir:
+        return 0, False
+    try:
+        speed = int(float(sysfs.read_text(f"{usb_dir}/speed", "0")))
+    except ValueError:
+        speed = 0
+    try:
+        with open(f"{usb_dir}/bos_descriptors", "rb") as f:
+            capable = usb_superspeed_capable(f.read())
+    except OSError:
+        capable = speed >= 5000
+    return speed, capable
+
+
 def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[Disk]:
     """USB/removable disks (not the system eMMC). Includes empty reader slots."""
     exclude = exclude or set()
@@ -84,6 +115,7 @@ def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[
         parts = [p for p in sysfs.listdir(d)
                  if p.startswith(name) and os.path.exists(f"{d}/{p}/partition")]
         dev = f"{d}/device"
+        speed, usb3 = usb_link(usb)
         out.append(Disk(
             name=name,
             devpath=real.replace(sys_root, "", 1) if real.startswith(sys_root) else real,
@@ -94,6 +126,8 @@ def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[
             usb_port=os.path.basename(usb) if usb else "",
             lun=os.path.basename(os.path.realpath(dev)) if os.path.exists(dev) else "",
             partitions=parts,
+            usb_speed=speed,
+            usb3=usb3,
         ))
     return out
 

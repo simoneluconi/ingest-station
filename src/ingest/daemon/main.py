@@ -69,15 +69,17 @@ class Source:
             name = self.cam["model"]
             if st is not None and self.cam.get("count", 1) > 1:
                 name += f" - {st.description or st.label or 'slot ' + str(self.cam['n'] + 1)}"
+            speed, usb3 = devices.usb_link(self.cam.get("sysdir"))
             return {"name": name, "model": self.cam["model"], "vendor": self.cam["vendor"],
                     "serial": self.cam["serial"], "capacity": st.capacity if st else 0,
-                    "fs": "camera", "label": ""}
+                    "fs": "camera", "label": "", "usb_speed": speed, "usb3": usb3}
         d = self.disk
         return {"name": devices.describe(d) if d else "", "model": d.model if d else "",
                 "vendor": d.vendor if d else "", "serial": d.serial if d else "",
                 "capacity": d.size if d else 0,
                 "fs": self.volume.fstype if self.volume else "",
-                "label": self.volume.label if self.volume else ""}
+                "label": self.volume.label if self.volume else "",
+                "usb_speed": d.usb_speed if d else 0, "usb3": d.usb3 if d else False}
 
     def to_dict(self) -> dict:
         d = {"id": self.id, "slot": self.slot, "kind": self.kind, "status": self.status,
@@ -86,6 +88,10 @@ class Source:
         if self.scan is not None:
             d["summary"] = self.scan.summary()
         return d
+
+
+def _remove_hint(src: Source) -> str:
+    return "You can disconnect the camera" if src.kind == "camera" else "You can remove the card"
 
 
 def slot_key(disk: devices.Disk) -> str:
@@ -301,7 +307,8 @@ class Daemon:
         placeholder = Source(id=key, slot=key, kind="camera", status="detected",
                              message="Connecting to the camera...",
                              cam={"model": ucam.product or "Camera", "vendor": ucam.vendor,
-                                  "serial": ucam.serial, "storage": None, "n": 0, "count": 1})
+                                  "serial": ucam.serial, "storage": None, "n": 0, "count": 1,
+                                  "sysdir": ucam.sysdir})
         self.sources[key] = placeholder
         self.changed()
         try:
@@ -325,7 +332,8 @@ class Daemon:
             sid = f"{key}:{n}"
             src = Source(id=sid, slot=key, kind="camera",
                          cam={"model": model, "vendor": ucam.vendor, "serial": ucam.serial,
-                              "storage": st, "n": n, "count": len(storages)})
+                              "storage": st, "n": n, "count": len(storages),
+                              "sysdir": ucam.sysdir})
             self.sources[sid] = src
             src.task = asyncio.create_task(self._prepare_camera(src, cam))
         self.beeper.play("start")
@@ -435,7 +443,7 @@ class Daemon:
                           "files": res.files, "bytes": res.bytes, "seconds": round(res.seconds),
                           "mbps": round(res.copy_mbps, 1)}
             src.status = "done" if res.status == "done" else "error"
-            src.message = ("You can remove the card" if res.status == "done" else res.error)
+            src.message = (_remove_hint(src) if res.status == "done" else res.error)
             self.last_result = {**src.result, "source": src.id,
                                 "name": src.info()["name"], "time": time.time()}
             if res.status == "done" and res.copy_mbps > 1:
@@ -552,7 +560,7 @@ class Daemon:
             if src.mount:
                 await asyncio.to_thread(mounts.umount, src.mount)
                 src.mount = None
-            src.status, src.message = "ejected", "You can remove the card"
+            src.status, src.message = "ejected", _remove_hint(src)
             self.changed()
             return True
         if cmd == "rescan":

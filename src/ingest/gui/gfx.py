@@ -39,10 +39,19 @@ _icons = LRU(256)
 _fonts: dict = {}
 
 
+def _clear_surface(size, color) -> pygame.Surface:
+    """A transparent surface whose pixels already have `color`: smoothscale
+    averages RGB too, and the default transparent *black* would darken every
+    anti-aliased edge (a grey halo around rounded corners and icons)."""
+    surf = pygame.Surface(size, pygame.SRCALPHA)
+    surf.fill((*color[:3], 0))
+    return surf
+
+
 def _corner(radius: int, color) -> pygame.Surface:
     """Top-left quarter disc of `radius`, anti-aliased, in `color`."""
     def make():
-        big = pygame.Surface((radius * SS, radius * SS), pygame.SRCALPHA)
+        big = _clear_surface((radius * SS, radius * SS), (255, 255, 255))
         pygame.draw.circle(big, (255, 255, 255, 255), (radius * SS, radius * SS), radius * SS)
         mask = pygame.transform.smoothscale(big, (radius, radius))
         surf = pygame.Surface((radius, radius), pygame.SRCALPHA)
@@ -83,7 +92,7 @@ def shadow(surf, rect, radius: int, color, alpha: int, blur: int, offset_y: int 
     def make():
         k = 6
         w, h = r.w + blur * 2, r.h + blur * 2
-        small = pygame.Surface((max(1, w // k), max(1, h // k)), pygame.SRCALPHA)
+        small = _clear_surface((max(1, w // k), max(1, h // k)), color)
         inner = pygame.Rect(blur // k, blur // k, max(1, r.w // k), max(1, r.h // k))
         pygame.draw.rect(small, (*color[:3], alpha), inner, border_radius=max(1, radius // k))
         # two smooth passes approximate a gaussian blur
@@ -146,9 +155,20 @@ def fit(theme, s: str, size, weight: str, max_w: int) -> str:
     return best
 
 
+SIZE_ORDER = ["xs", "sm", "md", "lg", "xl", "xxl", "hero"]
+
+
 def text(surf, theme, s: str, pos, size="md", color=None, weight="regular",
-         anchor="topleft", max_w: int | None = None) -> pygame.Rect:
+         anchor="topleft", max_w: int | None = None,
+         min_size: str | None = None) -> pygame.Rect:
+    """Draw `s`. With max_w, a text that does not fit is first drawn smaller,
+    down to min_size (named sizes only), and only then ellipsized."""
     color = color or theme.c["text"]
+    if max_w and min_size and size in SIZE_ORDER:
+        for smaller in SIZE_ORDER[SIZE_ORDER.index(min_size):SIZE_ORDER.index(size) + 1][::-1]:
+            size = smaller
+            if text_width(theme, s, size, weight) <= max_w:
+                break
     if max_w:
         s = fit(theme, s, size, weight, max_w)
     t = text_surface(theme, s, size, color, weight)
@@ -277,7 +297,7 @@ def _draw_icon(d: pygame.Surface, name: str, s: float, col, lw: int) -> None:
                                                              12 + 9.5 * math.sin(a)))
     elif name == "moon":
         pygame.draw.circle(d, col, (12 * s, 12 * s), 9 * s)
-        pygame.draw.circle(d, (0, 0, 0, 0), (16 * s, 8.5 * s), 7.5 * s)
+        pygame.draw.circle(d, (*col[:3], 0), (16 * s, 8.5 * s), 7.5 * s)
     elif name == "lock":
         R(4.5, 10.5, 15, 11, 2.5)
         pygame.draw.arc(d, col, (7.5 * s, 3 * s, 9 * s, 12 * s), 0, math.pi, lw)
@@ -325,7 +345,7 @@ def _draw_icon(d: pygame.Surface, name: str, s: float, col, lw: int) -> None:
 
 def icon(surf, name: str, center, size: int, color) -> None:
     def make():
-        big = pygame.Surface((size * SS, size * SS), pygame.SRCALPHA)
+        big = _clear_surface((size * SS, size * SS), color)
         _draw_icon(big, name, size * SS / 24, (*color[:3], 255), max(2, int(size * SS / 12)))
         return pygame.transform.smoothscale(big, (size, size))
     s = _icons.get_or((name, size, tuple(color[:3])), make)
@@ -334,7 +354,7 @@ def icon(surf, name: str, center, size: int, color) -> None:
 
 def circle(surf, center, radius: int, color) -> None:
     """Anti-aliased filled circle."""
-    big = pygame.Surface((radius * 2 * SS, radius * 2 * SS), pygame.SRCALPHA)
+    big = _clear_surface((radius * 2 * SS, radius * 2 * SS), color)
     pygame.draw.circle(big, (*color[:3], 255), (radius * SS, radius * SS), radius * SS)
     small = pygame.transform.smoothscale(big, (radius * 2, radius * 2))
     surf.blit(small, (center[0] - radius, center[1] - radius))

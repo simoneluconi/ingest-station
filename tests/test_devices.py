@@ -93,3 +93,32 @@ def test_share_candidates():
     assert "vers=2.1" in smb[0][2] and "guest" in smb[0][2]
     assert share.dest_root({"subdir": "Ingest/2026"}, "/mnt") == os.path.join("/mnt", "Ingest",
                                                                               "2026")
+
+
+# BOS descriptors read on the Wyse 3040
+KINGSTON_AT_480 = bytes.fromhex("050f16000207100206000000" "0a1003000e00020aff07")
+CANON_R6 = bytes.fromhex("050f58000507100206000000" "0a1003000e00010aff07"
+                         "12100600544b0000000001000000200130011810")
+USB2_ONLY = bytes.fromhex("050f0c000107100206000000")
+
+
+def test_usb_superspeed_capable():
+    # a USB 3 stick on a USB 2 link still lists the SuperSpeed capability
+    assert devices.usb_superspeed_capable(KINGSTON_AT_480)
+    assert devices.usb_superspeed_capable(CANON_R6)
+    assert not devices.usb_superspeed_capable(USB2_ONLY)
+    assert not devices.usb_superspeed_capable(b"")
+    # a truncated or zero-length descriptor must not loop forever
+    assert not devices.usb_superspeed_capable(bytes.fromhex("050f0c0001" "00"))
+
+
+def test_usb_link(tmp_path):
+    d = tmp_path / "1-2"
+    d.mkdir()
+    (d / "speed").write_text("480\n")
+    (d / "bos_descriptors").write_bytes(KINGSTON_AT_480)
+    assert devices.usb_link(str(d)) == (480, True)
+    (d / "bos_descriptors").unlink()
+    (d / "speed").write_text("1.5\n")
+    assert devices.usb_link(str(d)) == (1, False)
+    assert devices.usb_link(None) == (0, False)

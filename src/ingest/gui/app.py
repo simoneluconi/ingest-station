@@ -485,11 +485,14 @@ class App:
 def _ring(surf, rect, color, radius, width) -> None:
     """Focus ring: an anti-aliased outline drawn on top of the widget."""
     r = pygame.Rect(rect)
+    # transparent pixels already in the ring colour, and the hole subtracts
+    # alpha only: otherwise the anti-aliased edges turn dark (a grey halo)
     ring = pygame.Surface(r.size, pygame.SRCALPHA)
+    ring.fill((*color[:3], 0))
     gfx.rrect(ring, ring.get_rect(), (*color[:3], 255), radius)
     inner = ring.get_rect().inflate(-2 * width, -2 * width)
     hole = pygame.Surface(inner.size, pygame.SRCALPHA)
-    gfx.rrect(hole, hole.get_rect(), (255, 255, 255, 255), max(0, radius - width))
+    gfx.rrect(hole, hole.get_rect(), (0, 0, 0, 255), max(0, radius - width))
     ring.blit(hole, inner.topleft, special_flags=pygame.BLEND_RGBA_SUB)
     surf.blit(ring, r.topleft)
 
