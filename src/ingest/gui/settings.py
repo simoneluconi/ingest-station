@@ -403,6 +403,20 @@ class Settings(Screen):
                    {"web": {"port": int(v)}}) if v.isdigit() else None, numeric=True)),
                icon="network")
 
+    def _index_command(self, app, cmd: str, **args) -> None:
+        def done(ok, res):
+            if not ok:
+                app.push(Message("Not done", str(res), "error"))
+            elif cmd == "index.reset":
+                app.push(Message("Import history cleared",
+                                 f"{res.get('imports', 0)} imports forgotten: every file "
+                                 "counts as new.", "ok"))
+            else:
+                app.push(Message("Import history rebuilt",
+                                 f"{res.get('folders', 0)} folders and {res.get('files', 0)} "
+                                 "files found on the network share.", "ok"))
+        app.command(cmd, done, **args)
+
     def _draw_system(self, cv, inner):
         app, s, c = cv.app, cv.s, cv.c
         st = app.state or {}
@@ -433,7 +447,23 @@ class Settings(Screen):
         cv.row("updates", (inner.x, y, inner.w, s(104)), "Updates", "coming soon", None,
                sub="From a USB stick, a web upload or the network", chevron=False,
                icon="update")
-        y += s(104)
+        y += s(104) + s(24)
+        y = self._section(cv, inner, y, "Import history")
+        hw = (inner.w - s(24)) // 2
+        cv.button("rebuild", (inner.x, y, hw, s(96)), "Rebuild from share",
+                  lambda: app.confirm(
+                      "Rebuild the import history?",
+                      "It is read again from the folders on the network share: files in "
+                      "folders you deleted there will count as new.", "Rebuild",
+                      lambda: self._index_command(app, "index.rebuild", full=True),
+                      danger=False),
+                  "secondary", icon="refresh")
+        cv.button("forget", (inner.x + hw + s(24), y, hw, s(96)), "Forget all imports",
+                  lambda: app.confirm(
+                      "Forget all imports?",
+                      "Every file will count as new. Nothing is deleted on the network share.",
+                      "Forget all", lambda: self._index_command(app, "index.reset")),
+                  "danger_ghost", icon="cross")
         by = inner.bottom - s(104)
         bw = (inner.w - 2 * s(24)) // 3
         cv.button("rollback", (inner.x, by, bw, s(104)), "Roll back",

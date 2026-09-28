@@ -81,27 +81,65 @@ def usb_superspeed_capable(bos: bytes) -> bool:
     return False
 
 
+class SuperSpeedPorts:
+    """Ports that have carried a USB 3 link at least once, kept in a file.
+
+    The firmware's port description is not enough: on the Wyse 3040 a front
+    connector wired for USB 2 only still has a SuperSpeed peer in sysfs. A
+    port counts as USB 3 once a device has actually linked at >= 5 Gbit/s
+    on it."""
+
+    def __init__(self, path: str | None = None):
+        self.path = path
+        self.ports: set[str] = set()
+        if path:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    self.ports = {ln.strip() for ln in f if ln.strip()}
+            except OSError:
+                pass
+
+    def add(self, port: str) -> None:
+        if not port or port in self.ports:
+            return
+        self.ports.add(port)
+        if self.path:
+            try:
+                tmp = self.path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write("".join(f"{p}\n" for p in sorted(self.ports)))
+                os.replace(tmp, self.path)
+            except OSError:
+                pass
+
+
+SS_PORTS = SuperSpeedPorts()   # the daemon replaces it with a persistent one
+
+
 def usb_link(usb_dir: str | None) -> tuple[int, bool]:
     """(negotiated speed in Mbit/s, slow) of a USB device directory in sysfs.
-    `slow`: both the device and the port it is plugged into support USB 3,
-    yet the link runs slower (USB 2 cable, loose plug, dirty contacts). A
-    USB 3 device in a USB 2-only port is not slow: that is all it can do.
-    A port supports USB 3 when it has a SuperSpeed peer port."""
+    `slow`: a USB 3 device in a port known to carry USB 3 (see
+    SuperSpeedPorts) linked slower: USB 2 cable, loose plug, dirty contacts.
+    A USB 3 device in a USB 2 port is not slow: that is all it can do."""
     if not usb_dir:
         return 0, False
     try:
         speed = int(float(sysfs.read_text(f"{usb_dir}/speed", "0")))
     except ValueError:
         speed = 0
+    port = os.path.realpath(f"{usb_dir}/port")
     if speed >= 5000:
+        SS_PORTS.add(os.path.basename(port))
+        return speed, False
+    peer = os.path.join(port, "peer")
+    if not os.path.exists(peer):
         return speed, False
     try:
         with open(f"{usb_dir}/bos_descriptors", "rb") as f:
             device_usb3 = usb_superspeed_capable(f.read())
     except OSError:
         device_usb3 = False
-    port_usb3 = os.path.exists(os.path.join(os.path.realpath(f"{usb_dir}/port"), "peer"))
-    return speed, device_usb3 and port_usb3
+    return speed, device_usb3 and os.path.basename(os.path.realpath(peer)) in SS_PORTS.ports
 
 
 def scan_disks(sys_root: str = "/sys", exclude: set[str] | None = None) -> list[Disk]:

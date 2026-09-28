@@ -519,7 +519,22 @@ class SourceScreen(Screen):
             cv.button("eject", eject, "Eject", lambda: app.eject(self.sid), "secondary",
                       icon="eject")
             return
-        can_import = share_ok and status in ("ready", "countdown", "done", "error")
+        cv.button("eject", eject, "Eject", lambda: app.eject(self.sid), "secondary",
+                  icon="eject")
+        if not share_ok:
+            # the import buttons would be disabled: say why, in their place
+            reason = share.get("reason") or "not configured"
+            box = pygame.Rect(body.x, ay, eject[0] - body.x - s(40), bh)
+            gfx.rrect(cv.surf, box, c["err_soft"], s(22))
+            gfx.circle(cv.surf, (box.x + s(62), box.centery), s(34), c["surface"])
+            gfx.icon(cv.surf, "warning", (box.x + s(62), box.centery), s(40), c["err"])
+            gfx.text(cv.surf, t, "Import disabled", (box.x + s(120), box.centery - s(2)), "md",
+                     c["err"], "semibold", "bottomleft")
+            gfx.text(cv.surf, t, f"The network share is offline: {reason}",
+                     (box.x + s(120), box.centery + s(4)), "sm", c["text2"], "regular",
+                     max_w=box.right - box.x - s(150), min_size="xs")
+            return
+        can_import = status in ("ready", "countdown", "done", "error")
         cv.button("import_new", (body.x, ay, s(640), bh),
                   "Import new files" if sm["new_files"] else "Nothing new to import",
                   lambda: app.start_import(self.sid, "new", self.verify), "primary",
@@ -531,13 +546,6 @@ class SourceScreen(Screen):
                   lambda: app.start_import(self.sid, "all", self.verify), "secondary",
                   enabled=can_import and sm["files"] > 0,
                   sub=f"{sm['files']} files · {human(sm['bytes'])}")
-        cv.button("eject", eject, "Eject", lambda: app.eject(self.sid), "secondary",
-                  icon="eject")
-        if not share_ok:
-            reason = share.get("reason") or "not configured"
-            gfx.text(cv.surf, t, f"Import disabled: the network share is offline ({reason})",
-                     (body.x, ay - s(40)), "sm", c["err"], "medium", "bottomleft",
-                     max_w=body.w)
 
     def _set_verify(self, v: str) -> None:
         self.verify = v

@@ -161,4 +161,11 @@ def test_index_lookup_history_and_interrupt(tmp_path):
     assert {f["status"] for f in idx.files_of(a)} == {"verified", "copied"}
     idx.backup_to(str(tmp_path / "backup.db"))
     assert Index(str(tmp_path / "backup.db")).known_sizes() == {10, 20}
+    # forget everything: nothing is known any more, new imports still work
+    assert idx.reset() == 2
+    assert idx.lookup(["10:aaa", "20:bbb"]) == {} and idx.history() == []
+    assert idx.known_sizes() == set()
+    c = idx.start_import(dest_folder="2026-09-28_1800_EOS_R6", verify_mode="hash")
+    idx.add_file(c, "10:aaa", "DCIM/A.CR3", 10, 1.0, "h1")
+    assert set(idx.lookup(["10:aaa"])) == {"10:aaa"}
     idx.close()

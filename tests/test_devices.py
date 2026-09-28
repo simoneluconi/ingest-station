@@ -113,31 +113,44 @@ def test_usb_superspeed_capable():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="sysfs symlinks")
-def test_usb_link(tmp_path):
-    # a USB 3 port has a SuperSpeed peer; a USB 2-only port has none
-    usb3_port = tmp_path / "usb1-port2"
-    usb3_port.mkdir()
-    (usb3_port / "peer").mkdir()
-    usb2_port = tmp_path / "usb1-port4"
-    usb2_port.mkdir()
-    d = tmp_path / "1-2"
-    d.mkdir()
-    (d / "speed").write_text("480\n")
-    (d / "bos_descriptors").write_bytes(KINGSTON_AT_480)
-    (d / "port").symlink_to(usb3_port)
-    # USB 3 stick, USB 3 port, 480 Mbit/s: a slow link (cable, contacts)
-    assert devices.usb_link(str(d)) == (480, True)
-    # the same stick in a USB 2-only port: 480 is all it can do
-    (d / "port").unlink()
-    (d / "port").symlink_to(usb2_port)
-    assert devices.usb_link(str(d)) == (480, False)
-    # a USB 2 device in a USB 3 port: fine
-    (d / "port").unlink()
-    (d / "port").symlink_to(usb3_port)
-    (d / "bos_descriptors").write_bytes(USB2_ONLY)
-    assert devices.usb_link(str(d)) == (480, False)
-    (d / "speed").write_text("5000\n")
-    assert devices.usb_link(str(d)) == (5000, False)
-    (d / "speed").write_text("1.5\n")
-    assert devices.usb_link(str(d)) == (1, False)
+def test_usb_link(tmp_path, monkeypatch):
+    memory = tmp_path / "usb3-ports"
+    monkeypatch.setattr(devices, "SS_PORTS", devices.SuperSpeedPorts(str(memory)))
+
+    def port(name, peer=None):
+        p = tmp_path / name
+        p.mkdir()
+        if peer:
+            (p / "peer").symlink_to(tmp_path / peer)
+        return p
+    # two connectors with a SuperSpeed peer in sysfs; the second is wired
+    # for USB 2 only (as on the Wyse 3040), which sysfs cannot tell
+    port("usb2-port1")
+    port("usb2-port2")
+    front1 = port("usb1-port1", "usb2-port1")
+    front2 = port("usb1-port2", "usb2-port2")
+    usb2_only = port("usb1-port4")
+
+    def device(name, speed, bos, at):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "speed").write_text(f"{speed}\n")
+        (d / "bos_descriptors").write_bytes(bos)
+        (d / "port").symlink_to(at)
+        return str(d)
+    # nothing learnt yet: a USB 3 stick at 480 is not flagged
+    assert devices.usb_link(device("1-1", 480, KINGSTON_AT_480, front1)) == (480, False)
+    # a USB 3 link on the first connector teaches that it carries USB 3
+    assert devices.usb_link(device("2-1", 5000, KINGSTON_AT_480,
+                                   tmp_path / "usb2-port1")) == (5000, False)
+    assert memory.read_text() == "usb2-port1\n"
+    # now a USB 3 stick at 480 there is a slow link (cable, contacts)...
+    assert devices.usb_link(str(tmp_path / "1-1")) == (480, True)
+    # ...but not on the connector that never carried USB 3
+    assert devices.usb_link(device("1-2", 480, KINGSTON_AT_480, front2)) == (480, False)
+    # nor in a USB 2-only port, nor for a USB 2 device
+    assert devices.usb_link(device("1-4", 480, KINGSTON_AT_480, usb2_only)) == (480, False)
+    assert devices.usb_link(device("1-5", 480, USB2_ONLY, front1)) == (480, False)
+    # the memory survives a restart
+    assert devices.SuperSpeedPorts(str(memory)).ports == {"usb2-port1"}
     assert devices.usb_link(None) == (0, False)

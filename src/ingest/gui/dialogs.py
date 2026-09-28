@@ -31,23 +31,24 @@ class Confirm(Screen):
         self.danger, self.cancel = danger, cancel
 
     def draw(self, cv, rect):
+        """Centred, like the message dialog: title, message, the two buttons."""
         app, s = cv.app, cv.s
-        box = _panel(cv, rect, s(1100), s(520))
-        x = box.x + s(60)
-        gfx.text(cv.surf, cv.t, self.title, (x, box.y + s(56)), "xl", cv.c["text"], "semibold",
-                 max_w=box.w - s(120))
-        wrap(cv, self.message, pygame.Rect(x, box.y + s(150), box.w - s(120), s(200)), "md",
-             cv.c["text2"], 4)
-        bw, bh = s(400), s(110)
+        box = _panel(cv, rect, s(1100), s(500))
+        cx = box.centerx
+        gfx.text(cv.surf, cv.t, self.title, (cx, box.y + s(100)), "xl", cv.c["text"],
+                 "semibold", "center", max_w=box.w - s(120), min_size="lg")
+        wrap(cv, self.message, pygame.Rect(box.x + s(80), box.y + s(160), box.w - s(160),
+                                           s(140)), "md", cv.c["text2"], 3, align="center")
+        bw, bh, gap = s(400), s(110), s(24)
         by = box.bottom - bh - s(50)
 
         def yes():
             app.pop(self)
             self.on_confirm()
-        cv.button("yes", (box.right - s(60) - bw, by, bw, bh), self.confirm_label, yes,
-                  "danger" if self.danger else "primary")
-        cv.button("no", (box.right - s(60) - 2 * bw - s(24), by, bw, bh), self.cancel,
+        cv.button("no", (cx - gap // 2 - bw, by, bw, bh), self.cancel,
                   lambda: app.pop(self), "secondary")
+        cv.button("yes", (cx + gap // 2, by, bw, bh), self.confirm_label, yes,
+                  "danger" if self.danger else "primary")
 
 
 class Message(Screen):

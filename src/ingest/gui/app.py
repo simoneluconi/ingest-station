@@ -160,6 +160,9 @@ class App:
                 self.open_settings()
             elif ln == "screen:history":
                 self.open_history()
+            elif ln == "offline" and self.state:   # preview: share offline until the next event
+                self.state["share"] = {**self.state.get("share", {}), "state": "offline",
+                                       "reason": "host unreachable"}
             elif ln.startswith("msg:"):      # sample dialog: msg:error|ok|info
                 self.push(Message("Cannot start the import",
                                   "the network share is offline: host unreachable",

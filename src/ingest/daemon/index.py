@@ -104,6 +104,15 @@ class Index:
         with self._conn() as c:
             c.execute("UPDATE imports SET started=? WHERE id=?", (started, import_id))
 
+    def reset(self) -> int:
+        """Forget every import (the copies on the share are untouched).
+        Returns the number of imports removed."""
+        with self._conn() as c:
+            c.execute("DELETE FROM files")
+            n = c.execute("DELETE FROM imports").rowcount
+        self._conn().execute("VACUUM")
+        return n
+
     def mark_interrupted(self) -> int:
         """At daemon start: imports left 'running' were interrupted."""
         with self._conn() as c:

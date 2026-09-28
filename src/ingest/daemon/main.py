@@ -102,6 +102,9 @@ class Daemon:
     def __init__(self):
         self.settings = config.load()
         self.index = Index(config.INDEX_DB)
+        devices.SS_PORTS = devices.SuperSpeedPorts(
+            os.path.join(config.CONFIG_DIR, "usb3-ports")
+            if os.path.isdir(config.CONFIG_DIR) else None)
         self.beeper = Beeper(self.settings["beep"]["backend"])
         self.sources: dict[str, Source] = {}
         self.queue: list[str] = []
@@ -615,18 +618,40 @@ class Daemon:
             self.changed()
             return True
         if cmd == "index.rebuild":
-            if self.active_id:
+            # full=True: forget everything first, so folders deleted from the
+            # share no longer count as imported
+            if self.active_id or self.queue:
                 raise ValueError("an import is running")
             st = await asyncio.to_thread(share.check, self.settings["share"])
             if st["state"] != "online":
                 raise ValueError(f"share offline: {st.get('reason', '')}")
-            return await asyncio.to_thread(rebuild.rebuild, self.index,
-                                           share.dest_root(self.settings["share"]))
+            if args.get("full"):
+                await asyncio.to_thread(self.index.reset)
+            res = await asyncio.to_thread(rebuild.rebuild, self.index,
+                                          share.dest_root(self.settings["share"]))
+            log.info("index rebuilt from the share: %s", res)
+            self._rescan_all()
+            return res
+        if cmd == "index.reset":
+            if self.active_id or self.queue:
+                raise ValueError("an import is running")
+            n = await asyncio.to_thread(self.index.reset)
+            log.info("index reset: %d imports forgotten", n)
+            self.last_result = None
+            self._rescan_all()
+            return {"imports": n}
         if cmd == "beep":
             Beeper(args.get("backend", self.settings["beep"]["backend"])).play(
                 args.get("pattern", "ok"))
             return self.beeper.available()
         raise ValueError(f"unknown command {cmd!r}")
+
+    def _rescan_all(self) -> None:
+        """Scan every source again (after the index changed)."""
+        self._disk_sig.clear()
+        self._cam_sig.clear()
+        self._no_auto.update(src.slot for src in self.sources.values())
+        self._rescan.set()
 
     def _source(self, args: dict) -> Source:
         sid = args.get("source", "")
