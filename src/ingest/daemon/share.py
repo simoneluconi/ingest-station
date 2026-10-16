@@ -77,13 +77,21 @@ def mount(cfg: dict, mnt: str = MOUNT, timeout: float = 30) -> None:
         return
     os.makedirs(mnt, exist_ok=True)
     errors = []
-    for fstype, dev, opts, label in candidates(cfg):
+    tries = candidates(cfg)
+    for n, (fstype, dev, opts, label) in enumerate(tries):
         try:
             res = subprocess.run(["mount", "-t", fstype, "-o", opts, dev, mnt],
                                  capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             raise ShareError(f"{cfg['server']} does not answer") from e
         if res.returncode == 0:
+            if fstype.startswith("nfs") and n < len(tries) - 1 and not read_back_ok(cfg, mnt):
+                # the server accepts this version but its reads fail (seen
+                # with NFS 4.2 READ_PLUS): an import would copy fine and then
+                # fail at the verification; try the next version instead
+                subprocess.run(["umount", "-f", "-l", mnt], capture_output=True, timeout=30)
+                errors.append(f"{label}: the server accepts it but reading fails")
+                continue
             negotiated[mnt] = label
             return
         lines = sysfs.decode(res.stderr or res.stdout).strip().splitlines()
@@ -97,6 +105,45 @@ def mount(cfg: dict, mnt: str = MOUNT, timeout: float = 30) -> None:
     useful = [e for e in errors if "not supported" not in e.lower()
               and "protocol" not in e.lower()] or errors
     raise ShareError(_friendly(useful[0], cfg))
+
+
+def read_back_ok(cfg: dict, mnt: str) -> bool:
+    """Write a small file on the share and read it back from the server
+    (O_DIRECT: not from the page cache). False only when the read itself
+    fails or returns other bytes; when the file cannot be written, or the
+    share hangs, it is not a protocol version problem and check() reports it."""
+    data = f"ingest-station read-back {time.time()}".encode()
+    p = os.path.join(dest_root(cfg, mnt), MARK_DIR, f".readback-{os.getpid()}")
+
+    def run() -> bool:
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError:
+            return True
+        try:
+            try:
+                fd = os.open(p, os.O_RDONLY | getattr(os, "O_DIRECT", 0))
+            except OSError:
+                fd = os.open(p, os.O_RDONLY)    # no direct I/O on this file system
+            try:
+                return os.read(fd, 4096) == data
+            finally:
+                os.close(fd)
+        except OSError:
+            return False
+        finally:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    try:
+        return _with_timeout(run, 15)
+    except ShareError:
+        return True
 
 
 def _friendly(msg: str, cfg: dict) -> str:

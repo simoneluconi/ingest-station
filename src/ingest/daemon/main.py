@@ -739,6 +739,10 @@ class Daemon:
         if n:
             log.warning("%d import(s) were interrupted", n)
         await asyncio.to_thread(mounts.cleanup_stale)
+        # a share left mounted by a previous run is mounted again, so that the
+        # protocol version is negotiated (and checked) with the current code
+        await asyncio.to_thread(share.umount, share.MOUNT)
+        await asyncio.to_thread(share.umount, share.TEST_MOUNT)
         if os.path.exists(SOCKET):
             os.remove(SOCKET)
         server = await asyncio.start_unix_server(self.client, path=SOCKET)

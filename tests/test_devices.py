@@ -154,3 +154,23 @@ def test_usb_link(tmp_path, monkeypatch):
     # the memory survives a restart
     assert devices.SuperSpeedPorts(str(memory)).ports == {"usb2-port1"}
     assert devices.usb_link(None) == (0, False)
+
+
+def test_read_back_ok(tmp_path, monkeypatch):
+    cfg = {"subdir": ""}
+    # a share that reads back what was written
+    assert share.read_back_ok(cfg, str(tmp_path))
+    assert not any(p.name.startswith(".readback") for p in (tmp_path / share.MARK_DIR).iterdir())
+    # reads fail (an NFS version the server implements badly): try the next one
+    real_read = os.read
+
+    def bad_read(fd, n):
+        raise OSError(5, "Input/output error")
+    monkeypatch.setattr(share.os, "read", bad_read)
+    assert not share.read_back_ok(cfg, str(tmp_path))
+    monkeypatch.setattr(share.os, "read", real_read)
+    # cannot write at all: not a version problem, check() reports it
+    def no_write(*a, **k):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(share.os, "makedirs", no_write)
+    assert share.read_back_ok(cfg, str(tmp_path))
