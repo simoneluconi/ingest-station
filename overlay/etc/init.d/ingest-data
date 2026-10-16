@@ -30,9 +30,25 @@ start() {
 }
 
 stop() {
-	if mountinfo --quiet /data; then
-		ebegin "Unmounting data partition"
-		umount /data
-		eend $?
-	fi
+	local i=0
+	mountinfo --quiet /data || return 0
+	ebegin "Unmounting data partition"
+	# services stop in parallel (rc_parallel): ingestd may still be closing
+	# its log and index, give it a few seconds
+	while ! umount /data 2>/dev/null; do
+		if [ $i -ge 50 ]; then
+			# still busy: flush it read-only; the shutdown runlevel kills
+			# what is left (killprocs) and remounts everything read-only
+			eend 0
+			if mount -o remount,ro /data 2>/dev/null; then
+				ewarn "/data still in use, left mounted read-only"
+			else
+				ewarn "/data still in use, unmounted at shutdown"
+			fi
+			return 0
+		fi
+		sleep 0.1
+		i=$((i + 1))
+	done
+	eend 0
 }
