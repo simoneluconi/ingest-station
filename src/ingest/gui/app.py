@@ -34,6 +34,7 @@ from .theme import Theme  # noqa: E402
 from .ui import Canvas, move_focus  # noqa: E402
 
 HEARTBEAT = "/run/ingest-gui.alive"
+READY = "/run/ingest-gui.ready"          # written at the first frame on screen
 SCREENSHOT = "/tmp/ingest-gui.png"
 DEV_COMMANDS = "/tmp/ingest-gui.cmd"     # development aid, see _dev_commands()
 STATUS_H = 104
@@ -58,16 +59,18 @@ class Api:
             pass
 
     def _listen(self):
+        started = time.monotonic()
         while True:
             try:
                 with Client(timeout=10) as c:
                     for st in c.events():
                         self.q.put(("state", st))
                         self._wake()
-            except Exception:  # noqa: BLE001 - daemon restarting: retry
+            except Exception:  # noqa: BLE001 - daemon starting or restarting: retry
                 self.q.put(("offline", None))
                 self._wake()
-                time.sleep(2)
+                # at boot the daemon starts at the same time: retry quickly
+                time.sleep(0.25 if time.monotonic() - started < 30 else 2)
 
     def call(self, cmd: str, cb=None, **args):
         def run():
@@ -108,6 +111,7 @@ class App:
         self._last_minute = -1
         self._last_beat = 0.0
         self._last_hotplug = 0.0
+        self._first_frame_logged = False
         signal.signal(signal.SIGUSR1, lambda *_: self._want_screenshot())
         signal.signal(signal.SIGUSR2, lambda *_: self._want_dev_commands())
         self.dev_pending = False
@@ -382,6 +386,17 @@ class App:
             self.animating = True
         if self.display is not None:
             self.display.present(self.surf.get_buffer().raw)
+            if not self._first_frame_logged:
+                # boot timing: when the station is visibly ready; the rest of
+                # the hardware drivers wait for this (ingest-devices)
+                self._first_frame_logged = True
+                for path, text in (("/dev/kmsg", "ingest-gui: first frame on screen\n"),
+                                   (READY, "")):
+                    try:
+                        with open(path, "w") as f:
+                            f.write(text)
+                    except OSError:
+                        pass
         if self.screenshot:
             self.screenshot = False
             try:

@@ -42,13 +42,23 @@ DIST = os.path.join(ROOT, "dist")
 BOOT = os.path.join(ROOT, "buildlib", "boot")
 
 RUNLEVELS = {
-    "sysinit": ["devfs", "dmesg", "mdev", "hwdrivers", "modloop"],
+    "sysinit": ["devfs", "dmesg", "ingest-devices", "modloop"],
+    # the GUI and the daemon start in the boot runlevel, in parallel with it
+    # (rc_parallel): the GUI needs only the devices, the daemon the data
+    # partition; neither waits for the network
     "boot": ["modules", "sysctl", "hostname", "bootmisc", "syslog", "hwclock",
-             "ingest-watchdog", "ingest-data"],
+             "ingest-watchdog", "ingest-data", "ingestd", "ingest-gui"],
     "default": ["ingest-network", "ingest-console", "avahi-daemon", "ntpd", "ingest-sshkeys",
-                "sshd", "ingestd", "ingest-gui", "ingest-bootok"],
+                "sshd", "ingest-bootok"],
     "shutdown": ["mount-ro", "killprocs", "savecache"],
 }
+# OpenRC scripts kept in the system besides the runlevels above: their
+# dependencies (need/use, computed on the station from the dependency tree),
+# swclock for machines without an RTC, and the shared functions. The ~45
+# other scripts installed by the packages are moved away at boot (OpenRC
+# reads them all to build its dependency tree: ~10 ms each).
+SERVICE_DEPENDENCIES = ["dbus", "fsck", "localmount", "root", "sysfs", "swclock",
+                        "functions.sh"]
 TIMEZONE = "Europe/Rome"
 
 
@@ -292,6 +302,38 @@ def gui_assets(cfg: dict, fx: Fetcher, resolver: apk.Resolver) -> dict[str, tupl
     return out
 
 
+def compiled_python(src_root: str, dest_root: str, python_version: str) -> dict:
+    """Bytecode of the application, so the station does not compile it at
+    every boot (it runs from RAM: nothing persists). Only when this Python
+    has the same minor version as the station's; "checked hash" pycs, so a
+    .py changed later (tools/wyse.py push) is recompiled, not ignored."""
+    import py_compile
+    target = ".".join(python_version.split(".")[:2])
+    if f"{sys.version_info[0]}.{sys.version_info[1]}" != target:
+        say(f"  no precompiled bytecode: this is Python {sys.version_info[0]}."
+            f"{sys.version_info[1]}, the station has {target}")
+        return {}
+    out = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for dirpath, dirnames, files in os.walk(src_root):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, f), src_root).replace(os.sep, "/")
+                target_py = f"/{dest_root}/{rel}"
+                cfile = os.path.join(tmp, "out.pyc")
+                py_compile.compile(os.path.join(dirpath, f), cfile=cfile, dfile=target_py,
+                                   doraise=True,
+                                   invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+                # the station's layout (cache_from_source would use "\" here)
+                folder, name = target_py.lstrip("/").rsplit("/", 1)
+                pyc = f"{folder}/__pycache__/{name[:-3]}.{sys.implementation.cache_tag}.pyc"
+                with open(cfile, "rb") as fh:
+                    out[pyc] = (fh.read(), 0o644)
+    return out
+
+
 def build_overlay(world: list[str], mtime: int, vendored: dict | None = None) -> bytes:
     ov = Overlay(mtime=mtime)
     ov.add_tree(os.path.join(ROOT, "overlay"))
@@ -348,6 +390,13 @@ def build_usb(args) -> None:
     if kver not in modloop.listdir(modloop.lookup("/modules")):
         raise BuildError(f"modloop does not contain modules for kernel {kver}")
     say(f"  kernel {kver}, {len(keys)} Alpine signing keys")
+    k = cfg["kernel"]
+    base_entries, removed = initrd.slim(
+        base_entries, kver, k.get("initramfs_drop", []),
+        k.get("initramfs_keep", []) + k["initramfs_modules"])
+    slim_initramfs = initrd.write_entries(base_entries)
+    say(f"  initramfs: {len(base_initramfs) / 2**20:.1f} -> {len(slim_initramfs) / 2**20:.1f} MiB"
+        f" ({removed} unused modules removed)")
 
     say("[2/7] Package indexes")
     indexes = load_indexes(cfg, fx, keys)
@@ -381,11 +430,12 @@ def build_usb(args) -> None:
 
     say("[5/7] Kernel, initramfs and bootloader")
     iso.extract("/boot/vmlinuz-lts", os.path.join(slot, "vmlinuz-lts"))
-    write(os.path.join(slot, "initramfs-lts"), base_initramfs)
+    write(os.path.join(slot, "initramfs-lts"), slim_initramfs)
     iso.extract("/boot/modloop-lts", os.path.join(slot, "modloop-lts"))
     extra, added = initrd.build(
         base_entries, modloop, kver, cfg["kernel"]["extra_initrd_modules"],
         background_modules=cfg["kernel"].get("background_initrd_modules", []),
+        keep_services=[s for ss in RUNLEVELS.values() for s in ss] + SERVICE_DEPENDENCIES,
         early_sh=open(os.path.join(BOOT, "early.sh"), "rb").read(),
         modprobe_conf=open(os.path.join(ROOT, "overlay", "etc", "modprobe.d",
                                         "ingest-wyse.conf"), "rb").read())
@@ -411,6 +461,9 @@ def build_usb(args) -> None:
     say("[6/7] System overlay")
     vendored = vendor_packages(cfg, fx, resolver, selected)
     vendored.update(gui_assets(cfg, fx, resolver))
+    pyc = compiled_python(os.path.join(ROOT, "src", "ingest"), "opt/ingest/ingest",
+                          selected["python3"].version)
+    vendored.update(pyc)
     ovl = build_overlay(world, mtime, vendored)
     write(os.path.join(slot, "ingest.apkovl.tar.gz"), ovl)
     say(f"  ingest.apkovl.tar.gz: {len(ovl) // 1024} KiB")

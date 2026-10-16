@@ -52,6 +52,18 @@ Phase 3 (GUI on the monitor) and the phase 2 daemon.
 - GRUB: the embedded config of the ISO's `BOOTX64.EFI` no longer searches
   every disk for the ISO label ("error: no such device", a few seconds).
 - The build refuses Python files that do not compile.
+- Fast boot: the GUI is on screen 7.2 s after the kernel starts and the
+  boot is confirmed at 7.6 s (19.6 s before). Boot cache of the installed
+  system in `/data/cache` (restored in ~1.2 s instead of a ~4.1 s package
+  install); no boot media scan on eMMC boots; OpenRC in parallel with only
+  the services in use; ingestd and the GUI in the `boot` runlevel and the
+  boot confirmation no longer waits for the network; `ingest-devices`
+  replaces mdev/hwdrivers and loads drivers in the background (network card
+  first, the rest after the GUI's first frame); precompiled Python.
+- Slim initramfs: driver families no thin client needs (server SCSI/RAID,
+  InfiniBand, NVMe over fabrics, storage targets, 10G NICs, software RAID)
+  and unused firmware are removed, 22.5 -> 12.6 MB; GRUB loads it in 3.1 s
+  instead of 4.0 s. Configurable in `buildlib/config.toml`.
 
 ### Fixed (phase 3)
 - After a cancelled or failed import the source stayed in error and a new

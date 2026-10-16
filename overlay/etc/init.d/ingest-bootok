@@ -6,7 +6,10 @@
 
 description="Ingest Station boot confirmation"
 depend() {
-	after ingest-data ingest-network ingest-console
+	# not after the network: a healthy boot needs the data partition, the
+	# daemon and the GUI, not an address (the cable may be unplugged)
+	after ingest-data ingestd ingest-gui
+	before ingest-network
 }
 
 start() {

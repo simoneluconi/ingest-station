@@ -12,20 +12,36 @@ repos = ["main", "community"]
 
 [kernel]
 # modules loaded by the initramfs before the boot media scan (quirk: the eMMC
-# host drivers are not auto-loaded on the Wyse 3040)
+# host drivers are not auto-loaded on the Wyse 3040). nls_utf8 (the FAT
+# iocharset) is loaded here so that mounting the boot media never waits
+# behind i915, which loads in the background at the same time.
 initramfs_modules = [
   "loop", "squashfs", "sd-mod", "usb-storage", "vfat", "nls_cp437",
-  "nls_iso8859-1", "ext4", "sdhci", "sdhci-acpi", "mmc_block",
+  "nls_iso8859-1", "nls_utf8", "ext4", "sdhci", "sdhci-acpi", "mmc_block",
 ]
 # extra modules copied from the modloop into ingest-initrd.gz
 # watchdog drivers: the Wyse 3040 exposes its watchdog through the ACPI WDAT
 # table (wdat_wdt); iTCO_wdt covers other Intel chipsets (and QEMU q35)
-extra_initrd_modules = ["wdat_wdt", "iTCO_wdt", "lpc_ich"]
+extra_initrd_modules = ["wdat_wdt", "iTCO_wdt", "lpc_ich", "nls_utf8"]
 # also copied into ingest-initrd.gz, and loaded in the background while the
 # packages are installed: i915 alone takes ~3.5 s on the Wyse 3040, which
 # hwdrivers would otherwise spend later, before the GUI can start.
 # Harmless where the device is missing (modprobe just fails).
 background_initrd_modules = ["i915"]
+# driver families removed from the official initramfs (paths under kernel/):
+# it is read by GRUB through the firmware at ~10 MB/s, and these cannot
+# matter on a thin client or a small PC (server SCSI/RAID HBAs, InfiniBand,
+# NVMe over fabrics, storage targets, 10G NICs, software RAID). SATA, NVMe,
+# every USB host and storage driver, MMC/SD, HID, virtio, VMware and
+# Hyper-V stay: 22.5 -> 12.6 MB, ~1 s less at boot.
+initramfs_drop = [
+  "drivers/scsi", "drivers/infiniband", "drivers/target", "drivers/message",
+  "drivers/net/ethernet", "drivers/nvme/target", "drivers/nvme/host/nvme-tcp",
+  "drivers/nvme/host/nvme-rdma", "drivers/md", "lib/raid6", "crypto/async_tx",
+]
+# kept from the dropped families (with their dependencies): disks and
+# optical drives (USB, UAS, SATA), virtual machine disks
+initramfs_keep = ["sd-mod", "sr-mod", "sg", "uas", "virtio_scsi", "vmw_pvscsi", "hv_storvsc"]
 cmdline = [
   "quiet", "loglevel=3",
   "consoleblank=0",                                  # quirk: display does not wake up

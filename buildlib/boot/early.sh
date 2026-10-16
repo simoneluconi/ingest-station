@@ -77,10 +77,103 @@ ingest_find_media() {
 	return 1
 }
 
-ingest_bg_pid=
+# -- boot cache ---------------------------------------------------------------
+# Installing the packages into the RAM root takes ~4 s at every boot. The
+# first boot of a system version saves the freshly installed root (before
+# anything ran in it) as an uncompressed tar on the data partition; later
+# boots extract it instead (~1.3 s). The key covers what the root is made
+# of: the apkovl, the slot's package indexes and the kernel. Installer and
+# rescue boots never use it. Any problem means a normal package install.
+
+ingest_cache_mnt=/ingest/data
+ingest_data=
+for _o in $(cat /proc/cmdline); do
+	case "$_o" in
+	ingest_data=*) ingest_data=${_o#*=} ;;
+	esac
+done
+
+ingest_cache_usable() {
+	[ -n "$ingest_slot_ok" ] && [ -n "$ingest_data" ] || return 1
+	case " $(cat /proc/cmdline) " in *" ingest_mode="*) return 1 ;; esac
+	return 0
+}
+
+# OpenRC reads every script in /etc/init.d at boot to build its dependency
+# tree (~10 ms each, ~75 installed by the packages): the ones the station
+# never uses are moved away, after the package install and before the cache
+# is saved. The list comes from the build (/ingest/keep-services).
+ingest_prune_services() {
+	[ -s /ingest/keep-services ] || return 0
+	_keep=" $(tr '\n' ' ' < /ingest/keep-services) "
+	_away="$sysroot/usr/share/ingest/unused-init.d"
+	mkdir -p "$_away"
+	for _f in "$sysroot"/etc/init.d/*; do
+		case "$_keep" in
+		*" ${_f##*/} "*) ;;
+		*) mv "$_f" "$_away"/ ;;
+		esac
+	done
+}
+
+ingest_cache_key() {
+	{
+		sha1sum "$KOPT_apkovl"
+		cat /ingest/keep-services 2>/dev/null | sha1sum
+		for _r in $(echo "$ALPINE_REPO" | tr ',' ' '); do
+			cat "$_r"/*/APKINDEX.tar.gz 2>/dev/null | sha1sum
+		done
+		uname -r
+	} | sha1sum | cut -c1-16
+}
+
+# mount the data partition (ro or rw) on $ingest_cache_mnt
+ingest_cache_mount() {
+	_dev=$(findfs "${ingest_data}" 2>/dev/null) || return 1
+	mkdir -p "$ingest_cache_mnt"
+	mount -t ext4 -o "$1" "$_dev" "$ingest_cache_mnt" 2>/dev/null
+}
+
+# extract the cached root into $sysroot; fails when there is none
+ingest_cache_restore() {
+	ingest_cache_usable || return 1
+	ingest_cache_file="rootfs-$ingest_slot-$(ingest_cache_key).tar"
+	ingest_cache_mount ro || return 1
+	_ok=1
+	if [ -f "$ingest_cache_mnt/cache/$ingest_cache_file" ]; then
+		tar -xf "$ingest_cache_mnt/cache/$ingest_cache_file" -C "$sysroot" && _ok=0
+	fi
+	umount "$ingest_cache_mnt"
+	[ $_ok = 0 ] && ingest_log "system restored from the boot cache"
+	return $_ok
+}
+
+# save $sysroot (packages just installed) for the next boots of this version
+ingest_cache_save() {
+	ingest_cache_usable || return 0
+	[ -n "$ingest_cache_file" ] || ingest_cache_file="rootfs-$ingest_slot-$(ingest_cache_key).tar"
+	ingest_cache_mount rw || return 0
+	_dir="$ingest_cache_mnt/cache"
+	mkdir -p "$_dir"
+	# older caches of this slot (the other slot keeps its own, for rollbacks)
+	rm -f "$_dir"/rootfs-"$ingest_slot"-*.tar "$_dir"/.saving
+	if (cd "$sysroot" && tar -cf "$_dir/.saving" .) && sync; then
+		mv "$_dir/.saving" "$_dir/$ingest_cache_file" && sync
+		ingest_log "boot cache saved ($ingest_cache_file)"
+	else
+		rm -f "$_dir/.saving"
+	fi
+	umount "$ingest_cache_mnt"
+	return 0
+}
+
+ingest_bg_pid=${ingest_bg_pid:-}
 if [ -n "$ingest_slot" ]; then
 	ingest_arm_watchdog
-	if [ -s /ingest/background-modules ]; then
+	# slow drivers (i915) in the background, while the boot media is found
+	# and the root is installed (the FAT charset module is loaded before:
+	# mounting must not wait for a module behind i915)
+	if [ -z "$ingest_bg_pid" ] && [ -s /ingest/background-modules ]; then
 		( for _m in $(cat /ingest/background-modules); do modprobe -q "$_m"; done ) &
 		ingest_bg_pid=$!
 	fi

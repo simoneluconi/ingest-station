@@ -17,6 +17,12 @@ start() {
 	local MODE=dhcp ADDRESS= GATEWAY= DNS=
 	[ -r /data/config/network.env ] && . /data/config/network.env
 	ip link set lo up
+	# the drivers load in the background (ingest-devices): wait for the NIC
+	_i=0
+	while [ ! -e "/sys/class/net/$IFACE" ] && [ $_i -lt 100 ]; do
+		sleep 0.1
+		_i=$((_i + 1))
+	done
 	ebegin "Starting network on $IFACE ($MODE)"
 	ip link set "$IFACE" up || { eend 1; return 1; }
 	if [ "$MODE" = static ] && [ -n "$ADDRESS" ]; then

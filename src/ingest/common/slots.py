@@ -317,8 +317,9 @@ def health_problems(cmdline: dict[str, str]) -> list[str]:
                 problems.append("ingestd does not answer")
     except Exception as e:  # noqa: BLE001 - any failure means unhealthy
         problems.append(f"ingestd: {e}")
-    # the GUI must be running too (it writes a heartbeat every 5 s)
-    if os.path.exists("/etc/runlevels/default/ingest-gui"):
+    # the GUI must be running too (it writes a heartbeat every 5 s), when it
+    # is enabled in any runlevel
+    if any(os.path.exists(f"/etc/runlevels/{lvl}/ingest-gui") for lvl in ("boot", "default")):
         try:
             age = time.time() - os.path.getmtime("/run/ingest-gui.alive")
         except OSError:
@@ -348,7 +349,7 @@ def cmd_boot_ok(mgr: SlotManager, cmdline: dict[str, str], wait: int) -> int:
             return 0
         if time.monotonic() >= deadline:
             break
-        time.sleep(2)
+        time.sleep(0.5)
     _log(f"boot NOT healthy on slot {mgr.current}: {'; '.join(problems)}")
     if mgr.on_trial():
         _log("slot is on trial: rebooting so GRUB can count the attempt")

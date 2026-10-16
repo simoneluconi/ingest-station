@@ -14,7 +14,8 @@ export SDL_AUDIODRIVER=dummy
 export PYGAME_HIDE_SUPPORT_PROMPT=1
 
 depend() {
-	need ingestd
-	# before the network: the GUI shows the address when it comes
+	# only the display and input devices (devtmpfs, i915 loaded early): it
+	# does not wait for the daemon (it reconnects by itself) nor the network
+	after devfs
 	before ingest-network
 }

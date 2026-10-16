@@ -10,8 +10,7 @@ respawn_max=0
 
 depend() {
 	need localmount
-	# before the network: the daemon follows address changes by itself, and
-	# the GUI (which needs the daemon) is on screen sooner
+	# before the network: the daemon follows address changes by itself
 	after ingest-data
 	before ingest-bootok ingest-network
 }

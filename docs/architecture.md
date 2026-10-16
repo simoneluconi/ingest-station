@@ -112,9 +112,14 @@ signed update package of phase 5 will reuse the same staging path.
 
 | Runlevel | Services |
 |---|---|
-| sysinit | devfs, dmesg, mdev, hwdrivers, modloop |
-| boot | modules, sysctl, hostname, bootmisc, syslog, hwclock, **ingest-watchdog**, **ingest-data** |
-| default | **ingestd**, **ingest-gui**, **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-sshkeys**, sshd, **ingest-bootok** |
+| sysinit | devfs, dmesg, **ingest-devices**, modloop |
+| boot | modules, sysctl, hostname, bootmisc, syslog, hwclock, **ingest-watchdog**, **ingest-data**, **ingestd**, **ingest-gui** |
+| default | **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-sshkeys**, sshd, **ingest-bootok** |
+
+OpenRC starts services in parallel (`/etc/rc.conf.d/ingest.conf`). The init
+scripts of services not listed here are moved to
+`/usr/share/ingest/unused-init.d` by the initramfs, so OpenRC's dependency
+tree stays small.
 
 `ingestd` and `ingest-gui` run under `supervise-daemon` (restarted if they
 exit) and start before the network: the daemon follows address changes by
@@ -123,9 +128,16 @@ partition is mounted, the daemon answers and the GUI heartbeat
 (`/run/ingest-gui.alive`) is fresh. Phase 4 adds `ingest-web`.
 
 The display driver (i915) is loaded in the background by the initramfs
-while Alpine installs the packages (see `docs/boot-timing.md`); `hwdrivers`
-then finds it loaded. Unused drivers are blacklisted in
+(see `docs/boot-timing.md`). `ingest-devices` replaces Alpine's mdev and
+hwdrivers: mdev becomes the hotplug handler at once, the network card driver
+is loaded first and the coldplug of the other devices waits until the GUI
+shows its first frame. Unused drivers are blacklisted in
 `/etc/modprobe.d/ingest-unused.conf`.
+
+The installed root filesystem is cached in `/data/cache` (boot cache) and
+restored at the next boots instead of installing the packages again; the
+cache is rebuilt whenever the overlay, the package indexes or the kernel
+change.
 
 ## Build verification chain
 

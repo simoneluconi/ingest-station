@@ -1,0 +1,64 @@
+#!/sbin/openrc-run
+# Device manager and hardware drivers, without holding up the boot.
+#
+# Replaces Alpine's mdev and hwdrivers services in the sysinit runlevel:
+# mdev becomes the hotplug handler at once (new devices get their nodes and
+# drivers, see the MODALIAS line of /etc/mdev.conf), while the coldplug of
+# the devices already present and the two driver passes of hwdrivers run in
+# the background (~4 s on the Wyse 3040). The boot does not wait for them:
+# devtmpfs already provides the device nodes, the display driver (i915) is
+# loaded by the initramfs, the eMMC and watchdog drivers too, the network
+# service waits for its interface and the GUI picks up input devices when
+# they appear. Unused drivers are blacklisted in
+# /etc/modprobe.d/ingest-unused.conf.
+
+description="Device manager and hardware drivers (in the background)"
+
+depend() {
+	provide dev
+	need sysfs dev-mount
+	after modloop
+	before checkfs fsck
+	keyword -containers -vserver -lxc
+}
+
+aliases() {
+	find /sys/devices -name modalias -type f -print0 2>/dev/null | xargs -0 sort -u
+}
+
+start() {
+	ebegin "Starting the device manager"
+	mkdir -p /dev
+	echo /sbin/mdev > /proc/sys/kernel/hotplug
+	eend $?
+	(
+		# PCI drivers first (network card): the network service waits for it
+		get_bootparam noautodetect || aliases | grep '^pci:' | xargs modprobe -b -a
+		# the rest (USB, input...) once the GUI is on screen: loading modules
+		# is CPU-heavy and would slow down its start (10 s at most)
+		_i=0
+		while [ ! -e /run/ingest-gui.ready ] && [ $_i -lt 100 ]; do
+			sleep 0.1
+			_i=$((_i + 1))
+		done
+		# mdev -s does not create /dev/usb* nodes with recent kernels
+		for i in $(find /sys/devices -name 'usb[0-9]*'); do
+			[ -e "$i/uevent" ] && echo add > "$i/uevent"
+		done
+		mdev -s
+		if ! get_bootparam noautodetect; then
+			aliases | xargs modprobe -b -a
+			# a second pass for the devices that appeared meanwhile
+			aliases | xargs modprobe -b -a
+			if [ -e /dev/fb0 ] && ! [ -e /sys/module/fbcon ]; then
+				modprobe -b -q fbcon
+			fi
+		fi
+		: > /run/ingest-devices.done
+	) </dev/null >/dev/null 2>&1 &
+}
+
+stop() {
+	echo > /proc/sys/kernel/hotplug
+	return 0
+}
