@@ -174,3 +174,43 @@ def test_read_back_ok(tmp_path, monkeypatch):
         raise PermissionError(13, "Permission denied")
     monkeypatch.setattr(share.os, "makedirs", no_write)
     assert share.read_back_ok(cfg, str(tmp_path))
+
+
+def test_reachable_nfs(monkeypatch):
+    cfg = {"type": "nfs", "server": "nas", "path": "/photos"}
+    tries = share.candidates(cfg)
+
+    def ports(**states):
+        monkeypatch.setattr(share, "port_state", lambda host, port: states[f"p{port}"])
+    # NFS 4 only (port 111 silent, as on a server without rpcbind)
+    ports(p2049="open", p111="silent")
+    skipped = []
+    assert [t[3] for t in share._reachable_nfs(cfg, tries, skipped)] == \
+        ["NFS 4.2", "NFS 4.1", "NFS 4.0"]
+    assert skipped == ["NFS 3 is not offered by nas (no rpcbind on port 111)"]
+    # forced NFS 3 on that server: a clear message, at once
+    with pytest.raises(share.ShareError, match="NFS 3 is not offered"):
+        share._reachable_nfs(cfg, share.candidates({**cfg, "version": "3"}), [])
+    # nothing answers: not reachable; an unknown name says so
+    ports(p2049="silent", p111="silent")
+    with pytest.raises(share.ShareError, match="is not reachable"):
+        share._reachable_nfs(cfg, tries, [])
+    ports(p2049="unknown-host", p111="unknown-host")
+    with pytest.raises(share.ShareError, match="cannot find 'nas'"):
+        share._reachable_nfs(cfg, tries, [])
+    # the host answers but offers no NFS at all
+    ports(p2049="closed", p111="closed")
+    with pytest.raises(share.ShareError, match="does not offer NFS"):
+        share._reachable_nfs(cfg, tries, [])
+
+
+def test_port_state():
+    import socket
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    assert share.port_state("127.0.0.1", port) == "open"
+    srv.close()
+    assert share.port_state("127.0.0.1", port, timeout=1) in ("closed", "silent")
+    assert share.port_state("no-such-host.invalid", 2049) == "unknown-host"

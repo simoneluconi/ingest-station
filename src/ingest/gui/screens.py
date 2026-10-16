@@ -453,8 +453,30 @@ class SourceScreen(Screen):
         cards_h = ay - body.y - s(48)
         left = pygame.Rect(body.x, body.y, int(body.w * 0.44), cards_h)
         right = pygame.Rect(left.right + gap, body.y, body.right - left.right - gap, cards_h)
-        # -- left card: what is new, what was imported before
+        # -- left card: what is new and what was imported before, or the outcome
         gfx.card(cv.surf, left, t, s(32))
+        if status == "done" and src.get("result"):
+            # the summary is the one from before the import: show the outcome
+            self._done_card(cv, left, src)
+        else:
+            self._new_card(cv, left, sm)
+        self._right_card(cv, right, src, st, sm, share, share_ok)
+        self._actions(cv, body, ay, bh, src, sm, share, share_ok)
+
+    def _done_card(self, cv, left, src) -> None:
+        t, c, s = cv.t, cv.c, cv.s
+        x, y = left.x + s(52), left.y + s(48)
+        res = src["result"]
+        gfx.text(cv.surf, t, "LAST IMPORT", (x, y), "xs", c["text3"], "semibold")
+        status_block(cv, pygame.Rect(x, y + s(40), left.w - s(104), left.h - s(240)), "ok",
+                     "check", "Import complete",
+                     f"{res.get('files', 0)} files · {human(res.get('bytes'))} → "
+                     f"{res.get('folder', '')}", src.get("message") or "")
+        wrap(cv, "The device was released. To import from it again, scan it first.",
+             pygame.Rect(x, left.bottom - s(150), left.w - s(104), s(100)), "sm", c["text3"], 2)
+
+    def _new_card(self, cv, left, sm) -> None:
+        t, c, s = cv.t, cv.c, cv.s
         x, y = left.x + s(52), left.y + s(48)
         gfx.text(cv.surf, t, "NEW", (x, y), "xs", c["text3"], "semibold")
         r = gfx.text(cv.surf, t, str(sm["new_files"]), (x, y + s(36)), "hero",
@@ -479,7 +501,10 @@ class SourceScreen(Screen):
         else:
             wrap(cv, "Nothing from this device was imported before",
                  pygame.Rect(x, yy, left.w - s(104), s(120)), "md", c["text2"], 2)
-        # -- right card: verification and destination
+
+    def _right_card(self, cv, right, src, st, sm, share, share_ok) -> None:
+        """Verification and destination."""
+        app, t, c, s = cv.app, cv.t, cv.c, cv.s
         gfx.card(cv.surf, right, t, s(32))
         rx, ry, rw = right.x + s(52), right.y + s(48), right.w - s(104)
         gfx.text(cv.surf, t, "VERIFICATION", (rx, ry), "xs", c["text3"], "semibold")
@@ -502,7 +527,10 @@ class SourceScreen(Screen):
         gfx.text(cv.surf, t, "DESTINATION", (rx, dy + s(34)), "xs", c["text3"], "semibold")
         wrap(cv, destination_preview(app, share, src), pygame.Rect(rx, dy + s(78), rw, s(110)),
              "sm", c["text"] if share_ok else c["err"], 2, "medium")
-        # -- actions
+
+    def _actions(self, cv, body, ay, bh, src, sm, share, share_ok) -> None:
+        app, t, c, s = cv.app, cv.t, cv.c, cv.s
+        status = src["status"]
         if status == "countdown":
             cv.button("cancel_auto", (body.x, ay, s(640), bh),
                       f"Cancel auto-import ({src.get('countdown') or 0} s)",

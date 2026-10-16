@@ -76,8 +76,10 @@ def mount(cfg: dict, mnt: str = MOUNT, timeout: float = 30) -> None:
     if is_mounted(mnt):
         return
     os.makedirs(mnt, exist_ok=True)
-    errors = []
+    errors, skipped = [], []
     tries = candidates(cfg)
+    if cfg.get("type") != "smb":
+        tries = _reachable_nfs(cfg, tries, skipped)
     for n, (fstype, dev, opts, label) in enumerate(tries):
         try:
             res = subprocess.run(["mount", "-t", fstype, "-o", opts, dev, mnt],
@@ -101,10 +103,55 @@ def mount(cfg: dict, mnt: str = MOUNT, timeout: float = 30) -> None:
         if any(w in low for w in ("timed out", "no route", "unreachable", "connection refused",
                                   "name or service", "could not resolve")):
             break   # the server is not there: other versions will not help
+    errors += skipped      # a real mount error first, then "version not offered"
     # report the most useful error: not "version not supported" if avoidable
     useful = [e for e in errors if "not supported" not in e.lower()
               and "protocol" not in e.lower()] or errors
     raise ShareError(_friendly(useful[0], cfg))
+
+
+def port_state(host: str, port: int, timeout: float = 3) -> str:
+    """"open", "closed" (the host refused), "silent" (no answer: host down
+    or port filtered) or "unknown-host"."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return "open"
+    except socket.gaierror:
+        return "unknown-host"
+    except ConnectionRefusedError:
+        return "closed"
+    except OSError:
+        return "silent"
+
+
+def _reachable_nfs(cfg: dict, tries: list, errors: list) -> list:
+    """Drop the NFS versions whose port does not answer, in a few seconds,
+    instead of letting mount wait 25-60 s: NFS 4 needs port 2049, NFS 3
+    needs rpcbind on port 111 (then mountd). Raises when nothing answers."""
+    server = cfg["server"].strip()
+    need = {"nfs4": 2049, "nfs": 111}
+    # both ports, even for a forced version: one answering proves the server
+    # is up; in parallel, so a silent port costs 3 s at most
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(2) as pool:
+        states = dict(zip((2049, 111), pool.map(lambda p: port_state(server, p), (2049, 111))))
+    if "unknown-host" in states.values():
+        raise ShareError(f"cannot find '{server}' on the network (check the name)")
+    if all(s == "silent" for s in states.values()):
+        raise ShareError(f"{server} is not reachable")
+    kept = []
+    for t in tries:
+        if states[need[t[0]]] == "open":
+            kept.append(t)
+        elif t[0] == "nfs":
+            errors.append(f"NFS 3 is not offered by {server} (no rpcbind on port 111)")
+        else:
+            errors.append(f"NFS 4 is not offered by {server} (port 2049 does not answer)")
+    if not kept:
+        raise ShareError(errors[0] if len(errors) == 1 else
+                         f"{server} does not offer NFS (ports 2049 and 111 do not answer)")
+    return kept
 
 
 def read_back_ok(cfg: dict, mnt: str) -> bool:
