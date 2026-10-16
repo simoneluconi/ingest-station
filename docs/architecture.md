@@ -114,9 +114,18 @@ signed update package of phase 5 will reuse the same staging path.
 |---|---|
 | sysinit | devfs, dmesg, mdev, hwdrivers, modloop |
 | boot | modules, sysctl, hostname, bootmisc, syslog, hwclock, **ingest-watchdog**, **ingest-data** |
-| default | **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-sshkeys**, sshd, **ingest-bootok** |
+| default | **ingestd**, **ingest-gui**, **ingest-network**, **ingest-console**, avahi-daemon, ntpd, **ingest-sshkeys**, sshd, **ingest-bootok** |
 
-Phase 2-4 add `ingestd` (daemon), `ingest-gui` and `ingest-web`.
+`ingestd` and `ingest-gui` run under `supervise-daemon` (restarted if they
+exit) and start before the network: the daemon follows address changes by
+itself. `ingest-bootok` confirms a slot on trial only when the data
+partition is mounted, the daemon answers and the GUI heartbeat
+(`/run/ingest-gui.alive`) is fresh. Phase 4 adds `ingest-web`.
+
+The display driver (i915) is loaded in the background by the initramfs
+while Alpine installs the packages (see `docs/boot-timing.md`); `hwdrivers`
+then finds it loaded. Unused drivers are blacklisted in
+`/etc/modprobe.d/ingest-unused.conf`.
 
 ## Build verification chain
 
@@ -133,11 +142,14 @@ Phase 2-4 add `ingestd` (daemon), `ingest-gui` and `ingest-web`.
 ## Software architecture (phases 2-5)
 
 - `ingestd`: single source of truth; device detection, queue, copy, verify,
-  index (SQLite), share monitoring, updates, beeps. Exposes an HTTP +
-  WebSocket API on 127.0.0.1.
-- `ingest-gui`: pygame (Alpine `py3-pygame`) rendering off-screen; output
-  through KMS/DRM dumb buffers with pure-Python ioctls (no Mesa), input from
-  evdev (touch, mouse, keyboard).
+  index (SQLite), share monitoring, updates, beeps. API: JSON lines on the
+  Unix socket `/run/ingestd.sock` (request/reply, plus a live `state` stream
+  after `subscribe`); `ingestctl` and the GUI are clients.
+- `ingest-gui`: pygame rendering off-screen; output through KMS/DRM dumb
+  buffers with pure-Python ioctls (no Mesa), input from evdev (touch, mouse,
+  keyboard). pygame is vendored from Alpine's verified `py3-pygame` package
+  without its optional dependencies (numpy, sound, MIDI, image formats).
+  See `docs/gui.md`.
 
 There is no Windows simulation mode (dropped from the original brief):
 development and tests run on the Wyse itself, reached over SSH and updated

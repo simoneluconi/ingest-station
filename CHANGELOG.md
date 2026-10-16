@@ -5,10 +5,71 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Phase 2 (daemon): USB mass storage, cameras over PTP/MTP (not yet tested
-with a real camera), index rebuild.
+Phase 3 (GUI on the monitor) and the phase 2 daemon.
 
-### Added
+### Added (phase 3: GUI)
+- `ingest-gui`: full-screen touch interface on the monitor, a client of
+  `ingestd`. pygame draws off-screen and frames are copied to a KMS/DRM dumb
+  buffer (fbdev fallback): no X, no Mesa. Display hot-plug; input straight
+  from evdev (keyboard, mouse, touch, numeric keypad; Italian and US
+  layouts) with an always-visible focus ring and spatial arrow navigation.
+- Light (default) and dark themes; Inter fonts (subset at build time from
+  Alpine's `font-inter`); anti-aliased shapes and icons.
+- Screens: home with one tile per source; source summary (new and already
+  imported files, verification choice with time estimates, destination
+  preview); progress with a step indicator; pause/retry when the share is
+  lost; result ("Import complete" with the removal hint); import history.
+- Settings: destination (NFS/SMB, server, share, credentials, folder
+  browser, protocol version, connection test), import (auto-import and
+  countdown, default verification, folder names, beeps), display (theme,
+  keyboard layout), network (DHCP or static, QR code of the web address),
+  web access (PIN, port), system (versions, rollback, restart, shut down,
+  import history: rebuild from the share or forget all imports).
+- First-boot wizard: share, connection test, destination folder.
+- On-screen keyboard (letters, symbols, digits-only pad for PINs and ports)
+  with a Cancel button for touch.
+- USB link speed on every source ("5 Gbps", "480 Mbps"). "Slow link" is
+  flagged when a USB 3 device (read from its BOS SuperSpeed capability) is
+  plugged into a port that has carried a USB 3 link before, but linked
+  slower: a USB 2 cable or a loose plug. Ports are learnt because firmware
+  may describe a USB 2-only connector as USB 3 capable.
+- One layout for every outcome (done, nothing new, ejected, errors) and
+  centred dialogs; long texts shrink before being ellipsized.
+- The boot is confirmed only once the GUI is running (heartbeat): a slot
+  whose GUI does not start is rolled back.
+- Daemon: `index.reset` and full `index.rebuild` commands, logs of device
+  slots, volumes, removals and scan results.
+- Development aids: `tools/wyse.py push` (copy the code into the running
+  system), `tools/shot.sh` (send navigation commands to the GUI and fetch a
+  screenshot over SSH).
+
+### Changed (phase 3)
+- Boot confirmed at about 19 s instead of 31 s once the GUI was required:
+  i915 (~3.5 s) is loaded in the background by the initramfs while the
+  packages are installed; unused drivers (sound, Intel ME, Dell WMI, power
+  telemetry) are blacklisted; ingestd and the GUI start before the network;
+  pygame's sound, MIDI and image libraries are no longer installed.
+- GRUB: the embedded config of the ISO's `BOOTX64.EFI` no longer searches
+  every disk for the ISO label ("error: no such device", a few seconds).
+- The build refuses Python files that do not compile.
+
+### Fixed (phase 3)
+- After a cancelled or failed import the source stayed in error and a new
+  import was refused: the source is now scanned again (files copied so far
+  are recognised) without starting an automatic import.
+- A cancelled import was shown as an error (red); it is now amber with
+  "Files already copied are kept".
+- "You can remove the card" was shown for cameras: "You can disconnect the
+  camera".
+- Dark halo around rounded corners, icons and the focus ring
+  (anti-aliasing against transparent black).
+
+### Measured on the Wyse 3040 (phase 3)
+- Canon EOS R6 over USB-C (PTP, 5 Gbit/s link): 41 files, 943.7 MB in 39 s
+  (24 MB/s) to an SMB share; the files are recognised as imported at the
+  next connection.
+
+### Added (phase 2: daemon)
 - `ingestd` daemon (OpenRC, restarted automatically), single source of
   truth, JSON-lines API on the Unix socket `/run/ingestd.sock` with a live
   state stream; `ingestctl` command line client.
@@ -52,7 +113,7 @@ with a real camera), index rebuild.
   (`ingestctl dismiss`); clearer share errors; the share is shown offline
   while an import is paused.
 
-### Measured on the Wyse 3040
+### Measured on the Wyse 3040 (phase 2)
 - 5.6 GB (183 files) from a USB 3 stick to an SMB share on a Windows PC with
   mandatory signing: 124 s, 45 MB/s average, CPU 93% idle. The stick reads
   at 107 MB/s; the share accepts ~58 MB/s.

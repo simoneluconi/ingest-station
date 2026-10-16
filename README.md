@@ -9,10 +9,10 @@ The system is a minimal **Alpine Linux** running entirely from RAM
 (diskless mode), so it is robust against power cuts and barely writes to the
 internal eMMC. It is built on Windows with Python only.
 
-> **Status: phase 1** (build, installer, eMMC boot with A/B slots, hardware
-> quirks). The ingest daemon, GUI, web UI and signed updates arrive in the
-> next phases, see [CHANGELOG.md](CHANGELOG.md) and
-> [docs/phase1-testing.md](docs/phase1-testing.md).
+> **Status: phase 3** — build, installer, eMMC boot with A/B slots, the
+> ingest daemon (cards, USB disks, cameras and phones; NFS/SMB) and the GUI
+> on the monitor work on the Wyse 3040. The web UI (phase 4) and signed
+> update packages (phase 5) come next, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -179,7 +179,7 @@ Any **NFS** or **SMB** server works: a NAS (Synology, QNAP, TrueNAS, Unraid,
 Asustor...), a Windows PC, a Linux server. The destination (type, server,
 share, folder, credentials) is configured **from the station's GUI**: a
 first-boot wizard, then *Settings → Destination*, with *Test connection* and
-a folder browser (phase 3; until then with `ingestctl share set`).
+a folder browser (or over SSH with `ingestctl share set`).
 
 General advice:
 
@@ -229,10 +229,35 @@ General advice:
 
 ## 6. Daily use, updates and rollback
 
-*(Complete description in phase 2-5.)* Plug in a card: the summary shows
-what is new and what was already imported; choose *Import new only*
-(default), *Import all* or *Cancel/Eject*. The final screen turns
-**green** ("You can remove the card") or **red** with the error.
+The station is used from the monitor, with a touchscreen, a mouse or a
+keyboard (arrows move the focus, Enter activates, Esc goes back; a numeric
+keypad works too). The first time, a short wizard asks for the network share.
+
+1. **Plug in** a card reader, a USB stick or disk, or a camera/phone with
+   its cable (cameras and phones over PTP/MTP: on a phone choose *File
+   transfer*). Several sources at once are fine: the home screen shows one
+   tile each, with the USB link speed ("5 Gbps", "480 Mbps"; *slow link*
+   means a USB 3 device that linked at USB 2 speed in a USB 3 port, usually
+   a USB 2 cable or a loose plug).
+2. The **summary** shows how many files are new and which were imported
+   before (when and into which folder), the destination folder that will be
+   created, and the **verification**: *None* (fastest), *Hash* (a checksum
+   of every file while copying, saved next to the copies; recommended) or
+   *Full* (the copies are read back from the share).
+3. **Import new files** (or *Import all*). The progress screen shows the
+   steps, speed, time left and destination; you can go back to the home
+   screen and queue another source: it starts when the current one ends.
+4. The result says **Import complete** and *You can remove the card* (or
+   *disconnect the camera*), or why it failed. Files already copied are
+   always kept: the next time only the missing ones count as new.
+
+If the network share goes away during a copy, the import pauses with the
+reason and waits for *Retry* or *Cancel*. *Eject* releases a card without
+importing. *Settings → Import* enables the automatic import (with a
+countdown) and sets the default verification and the folder names.
+*Settings → System → Import history* rebuilds the list of imported files
+from the folders on the share, or forgets it (every file then counts as
+new; nothing is deleted on the share).
 
 **A/B slots.** The eMMC holds two complete systems, slot A and slot B.
 An update is written to the inactive slot and started "on trial": if it
@@ -249,12 +274,14 @@ settings (and, for now, with `ingest-slot rollback` on the console).
 | Firmware does not boot the installed system | The bootloader is always installed at the fallback path `\EFI\BOOT\BOOTX64.EFI` (the 3040 often ignores NVRAM entries) and an "Ingest Station" UEFI entry is also registered. In the BIOS, check *Boot Sequence*; if needed add a boot option pointing to `\EFI\BOOT\BOOTX64.EFI` on the eMMC. |
 | USB stick listed in F12 but does not boot | Use F12 → *Boot from file* and select `EFI\BOOT\BOOTX64.EFI`. Check that Secure Boot is disabled. |
 | Wrong time | The clock is synchronised with NTP (`pool.ntp.org`) and written to the hardware clock after every sync, so it survives power cuts. |
+| The date goes back (e.g. to 2018) at every power-on | The CMOS battery of the unit is flat: the hardware clock loses the time when the power is removed. NTP corrects it a few seconds after the network comes up; replace the CR2032 battery to keep the right time from the first second. |
+| A USB 3 stick shows *480 Mbps · slow link* | The stick and the port support USB 3 but the link came up at USB 2 speed: USB 2 cable or extension, plug not fully inserted, dirty contacts. A stick in a USB 2-only port is not flagged. |
 | Leftover ThinOS/ThinLinux partitions | The installer runs `wipefs` on every partition and on the whole disk before partitioning. |
 | Hang on shutdown or reboot | Caused by the `dw_dmac` DMA driver: it is blacklisted (`/etc/modprobe.d/ingest-wyse.conf` and `modprobe.blacklist=` on the kernel command line). |
 | Monitor does not wake up after standby | Console blanking and display power saving are disabled (`consoleblank=0`); the GUI never blanks the screen. |
 | eMMC read-only | Probably worn out. The installer checks the `ro`/`force_ro` flags and does a write/read-back test, then stops with a clear message instead of failing half way. |
 | Wrong disk | No fixed device names are used: the target is the only non-removable disk with `device/type == MMC`, excluding `mmcblk*boot0/boot1/rpmb` and the USB stick. Partitions are referenced by UUID only. |
-| The station hangs during boot | A hardware watchdog (Intel TCO) is armed in the initramfs and then fed by the `ingest-watchdog` service: if the system hangs, the board resets within about 10 minutes (the TCO fires on its second 300 s timeout) and GRUB counts the attempt of a slot on trial. A kernel panic reboots after 10 s. |
+| The station hangs during boot | A hardware watchdog (ACPI WDAT on the Wyse 3040, Intel TCO elsewhere) is armed in the initramfs and then fed by the `ingest-watchdog` service: if the system hangs, the board resets within about 10 minutes (the TCO fires on its second 300 s timeout) and GRUB counts the attempt of a slot on trial. A kernel panic reboots after 10 s. |
 
 Useful console commands (tty2, `Alt+F2`, login `root`): `ingest-slot status`,
 `dmesg | grep ingest`, `cat /data/log/boot.log`, `logread`.
@@ -271,4 +298,5 @@ Useful console commands (tty2, `Alt+F2`, login `root`): `ingest-slot status`,
 | `tests/` | unit tests (sysfs fixtures, grubenv, slots, packages, initrd) |
 | `docs/` | architecture, test procedures, boot timings |
 | `keys/` | Alpine release GPG key; `keys/private/` (never committed) holds the SSH key and, later, the update signing key |
-| `tools/wyse.py` | SSH client for the station: commands, status, over-the-air updates |
+| `tools/wyse.py` | SSH client for the station: commands, status, over-the-air updates, `push` of the code into the running system |
+| `tools/shot.sh` | drives the GUI over SSH and fetches a screenshot (see `docs/gui.md`) |
