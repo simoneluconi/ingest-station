@@ -112,7 +112,7 @@ class Choice(Screen):
 
 OSK_LETTERS = ["1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm.-_"]
 OSK_SYMBOLS = ["1234567890", "/\\:;()$&\"'", "!?#%*+=<>[", "{}|~^`,._-"]
-OSK_NUMERIC = ["123", "456", "789", ".0-"]
+OSK_NUMERIC = ["123", "456", "789", "0"]          # PIN and port: digits only
 
 
 class TextInput(Screen):
@@ -156,32 +156,38 @@ class TextInput(Screen):
 
     def draw(self, cv, rect):
         app, s, c = cv.app, cv.s, cv.c
-        box = _panel(cv, rect, s(1500), s(960))
+        rows = OSK_NUMERIC if self.numeric else (OSK_SYMBOLS if self.symbols else OSK_LETTERS)
+        gap, kh = s(12), s(92)
+        hint_h = s(56) if self.hint else s(0)
+        # the panel fits its content: title, field, hint, keys, bottom row
+        height = s(130 + 110 + 40) + hint_h + len(rows) * (kh + gap) + s(8) + kh + s(56)
+        box = _panel(cv, rect, s(1500), height)
         x = box.x + s(56)
-        gfx.text(cv.surf, cv.t, self.title, (x, box.y + s(44)), "xl", c["text"], "semibold")
+        gfx.text(cv.surf, cv.t, self.title, (x, box.y + s(74)), "xl", c["text"], "semibold",
+                 "midleft", max_w=box.w - s(420))
+        # touch has no Esc key: a way out without confirming
+        cv.button("cancel", (box.right - s(56) - s(240), box.y + s(34), s(240), s(80)), "Cancel",
+                  lambda: app.pop(self), "secondary", size="sm")
         field = pygame.Rect(x, box.y + s(130), box.w - s(112), s(110))
         gfx.rrect_border(cv.surf, field, c["surface2"], c["accent"], s(22), s(3))
         shown = self.value if self.show else "•" * len(self.value)
         tr = gfx.text(cv.surf, cv.t, shown or " ", (field.x + s(30), field.centery), "lg",
                       c["text"] if self.value else c["text3"], "medium", "midleft",
                       max_w=field.w - s(220))
-        if not self.value and self.hint:
-            gfx.text(cv.surf, cv.t, self.hint, (field.x + s(30), field.centery), "lg",
-                     c["text3"], "regular", "midleft", max_w=field.w - s(220))
         caret_x = tr.right + s(4) if self.value else field.x + s(30)
         pygame.draw.rect(cv.surf, c["accent"], (caret_x, field.centery - s(28), s(4), s(56)))
+        if self.hint:
+            gfx.text(cv.surf, cv.t, self.hint, (field.x + s(30), field.bottom + s(14)), "sm",
+                     c["text3"], max_w=field.w - s(60))
         if self.password:
             cv.button("show", (field.right - s(180), field.y + s(15), s(160), s(80)),
                       "Hide" if self.show else "Show",
                       lambda: setattr(self, "show", not self.show), "ghost", size="sm")
         # keyboard
-        rows = OSK_NUMERIC if self.numeric else (OSK_SYMBOLS if self.symbols else OSK_LETTERS)
-        ky = field.bottom + s(40)
+        ky = field.bottom + s(40) + hint_h
         kw_total = box.w - s(112)
         cols = max(len(r) for r in rows)
-        gap = s(12)
         kw = (kw_total - gap * (cols - 1)) // cols
-        kh = s(92)
         for ri, row in enumerate(rows):
             off = (kw_total - (len(row) * kw + (len(row) - 1) * gap)) // 2
             for ci, ch in enumerate(row):
@@ -252,7 +258,7 @@ class FolderBrowser(Screen):
         crumbs = "Share root" + ("  ›  " + "  ›  ".join(self.path.split("/")) if self.path else "")
         gfx.text(cv.surf, cv.t, crumbs, (x, box.y + s(124)), "md", c["accent"], "medium",
                  max_w=box.w - s(112))
-        lst = pygame.Rect(x, box.y + s(190), box.w - s(112), s(560))
+        lst = pygame.Rect(x, box.y + s(190), box.w - s(112), s(530))
         gfx.rrect(cv.surf, lst, c["surface2"], s(24))
         if self.items is None:
             gfx.text(cv.surf, cv.t, "Loading…", lst.center, "md", c["text2"], anchor="center")
@@ -300,4 +306,4 @@ class FolderBrowser(Screen):
         cv.button("mkdir", (x, by, s(360), s(100)), "New folder", new_folder, "secondary",
                   icon="plus")
         cv.button("cancel", (x + s(390), by, s(300), s(100)), "Cancel", lambda: app.pop(self),
-                  "ghost")
+                  "secondary")

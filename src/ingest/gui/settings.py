@@ -9,7 +9,7 @@ import pygame
 
 from . import gfx
 from .dialogs import Choice, Confirm, FolderBrowser, Message, TextInput
-from .screens import human, wrap
+from .screens import human, spinner, status_block, wrap
 from .ui import Canvas, Screen
 
 SCHEMAS = [("{date}_{time}_{label}", "2026-09-26_1405_EOS_R6", None),
@@ -35,45 +35,22 @@ class ShareForm:
         self.test: dict | None = None
         self.testing = False
 
-    def rows(self, cv: Canvas, x: int, y: int, w: int, prefix: str = "") -> int:
-        app, s, c = cv.app, cv.s, cv.c
-        d = self.draft
-        rh = s(104)
-        smb = d.get("type") == "smb"
-        cv.segmented(prefix + "type", (x, y, w, s(104)),
+    def grid(self, cv: Canvas, x: int, y: int, w: int, extra=(), prefix: str = "") -> int:
+        """The NFS/SMB switch and the share fields on a two-column grid, in
+        Settings and in the wizard. `extra`: more (key, label, value, action,
+        icon) cells. Returns the y below the grid."""
+        s = cv.s
+        cv.segmented(prefix + "type", (x, y, w, s(110)),
                      [("nfs", "NFS", "fast, recommended"), ("smb", "SMB", "Windows, users")],
-                     d.get("type", "nfs"), self._set("type"))
-        y += s(130)
-
-        def edit(key, title, hint="", password=False):
-            def go():
-                def ok(v):
-                    if password:
-                        self.password = v
-                    else:
-                        d[key] = v.strip()
-                    self.test = None
-                app.push(TextInput(title, "" if password else d.get(key, ""), ok,
-                                   password=password, hint=hint))
-            return go
-        cv.row(prefix + "server", (x, y, w, rh), "Server", d.get("server") or "not set",
-               edit("server", "Server address or name", "e.g. 192.168.1.10 or nas.local"),
-               icon="network")
-        y += rh
-        cv.row(prefix + "path", (x, y, w, rh), "Share name" if smb else "Export path",
-               d.get("path") or "not set",
-               edit("path", "Share name" if smb else "NFS export path",
-                    "e.g. Photos" if smb else "e.g. /volume1/photos"), icon="folder")
-        y += rh
-        if smb:
-            cv.row(prefix + "user", (x, y, w, rh), "User", d.get("username") or "guest",
-                   edit("username", "SMB user name"), icon="lock")
-            y += rh
-            cv.row(prefix + "password", (x, y, w, rh), "Password",
-                   "changed" if self.password else "unchanged",
-                   edit("password", "SMB password", password=True), icon="lock")
-            y += rh
-        return y
+                     self.draft.get("type", "nfs"), self._set("type"))
+        y += s(140)
+        cells = self.cells(cv.app) + list(extra)
+        gap, rh = s(24), s(100)
+        cw = (w - gap) // 2
+        for i, (key, label, value, action, icon) in enumerate(cells):
+            cv.row(prefix + key, (x + (i % 2) * (cw + gap), y + (i // 2) * rh, cw, rh - s(8)),
+                   label, value, action, icon=icon)
+        return y + ((len(cells) + 1) // 2) * rh
 
     def cells(self, app) -> list[tuple]:
         """(key, label, value, action, icon) for the share fields."""
@@ -220,27 +197,15 @@ class Settings(Screen):
         app, s = cv.app, cv.s
         y = self._title(cv, inner, "Destination")
         d = self.form.draft
-        cv.segmented("type", (inner.x, y, inner.w, s(110)),
-                     [("nfs", "NFS", "fast, recommended"), ("smb", "SMB", "Windows, users")],
-                     d.get("type", "nfs"), self.form._set("type"))
-        y += s(140)
         versions = SMB_VERSIONS if d.get("type") == "smb" else NFS_VERSIONS
-        cells = self.form.cells(app) + [
+        y = self.form.grid(cv, inner.x, y, inner.w, extra=[
             ("subdir", "Folder",
              "/" + d.get("subdir", "").strip("/") if d.get("subdir") else "share root",
              lambda: self._browse(app), "folder"),
             ("version", "Protocol",
              dict((v, lb) for v, lb, _ in versions).get(d.get("version", "auto"), "Automatic"),
              lambda: app.push(Choice("Protocol version", versions, d.get("version", "auto"),
-                                     self.form._set("version"))), "gear")]
-        gap = s(24)
-        cw = (inner.w - gap) // 2
-        rh = s(100)
-        for i, (key, label, value, action, icon) in enumerate(cells):
-            col, row = i % 2, i // 2
-            cv.row(key, (inner.x + col * (cw + gap), y + row * rh, cw, rh - s(8)), label,
-                   value, action, icon=icon)
-        y += ((len(cells) + 1) // 2) * rh + s(24)
+                                     self.form._set("version"))), "gear")]) + s(24)
         by = inner.bottom - s(104)
         self.form.test_line(cv, inner.x, y, inner.w)
         cv.button("test", (inner.x, by, s(420), s(104)), "Test connection",
@@ -488,16 +453,28 @@ class Wizard(Screen):
     """First boot: connect the network share, then show how to reach the
     station."""
     name = "wizard"
-    default_focus = "next"
+    STEPS = 5
 
     def __init__(self, app):
         self.step = 0
         self.form = ShareForm(app.settings.get("share", {}))
+        self._focused_result = False
+
+    @property
+    def default_focus(self) -> str:
+        if self.step == 2 and (self.form.test or {}).get("state") != "online":
+            return "retest"
+        return "next"
+
+    def _go(self, app, step: int) -> None:
+        self.step = step
+        self._focused_result = False
+        app.focus[id(self)] = self.default_focus
 
     def on_nav(self, app, action):
         if action == "back":
             if self.step > 0:
-                self.step -= 1
+                self._go(app, self.step - 1)
             return True
         return False
 
@@ -507,83 +484,124 @@ class Wizard(Screen):
         box.center = rect.center
         gfx.card(cv.surf, box, t, s(40))
         inner = box.inflate(-s(120), -s(100))
-        steps = ["Welcome", "Share", "Connect", "Folder", "Done"]
-        # progress dots
-        for i, name in enumerate(steps):
-            x = inner.right - (len(steps) - i) * s(60)
-            gfx.circle(cv.surf, (x, inner.y + s(20)), s(10),
+        # step indicator, left-aligned above the title: dots and "Step n of 5"
+        for i in range(self.STEPS):
+            gfx.circle(cv.surf, (inner.x + s(9) + i * s(34), inner.y + s(14)), s(9),
                        c["accent"] if i <= self.step else c["track"])
-        y = inner.y
-        by = inner.bottom - s(110)
-        if self.step == 0:
-            gfx.text(cv.surf, t, "Welcome to Ingest Station", (inner.x, y + s(60)), "xxl",
-                     c["text"], "bold")
+        gfx.text(cv.surf, t, f"STEP {self.step + 1} OF {self.STEPS}",
+                 (inner.x + self.STEPS * s(34) + s(14), inner.y + s(14)), "xs", c["text3"],
+                 "semibold", "midleft")
+        y = inner.y + s(60)            # title line
+        by = inner.bottom - s(110)     # buttons line
+        bw = s(340)
+        next_rect = (inner.right - bw, by, bw, s(110))
+        prev_rect = (inner.x, by, s(300), s(110))
+        step = self.step
+        if step == 0:
+            gfx.text(cv.surf, t, "Welcome to Ingest Station", (inner.x, y), "xxl", c["text"],
+                     "bold", max_w=inner.w, min_size="xl")
             wrap(cv, "Let's connect the network share where the cards will be copied. You can "
-                 "change everything later in Settings.", pygame.Rect(inner.x, y + s(200),
-                                                                     inner.w, s(200)), "lg",
-                 c["text2"], 3)
+                 "change everything later in Settings.",
+                 pygame.Rect(inner.x, y + s(150), inner.w, s(200)), "lg", c["text2"], 3)
             ip = (app.state or {}).get("ip") or "waiting for the network…"
-            gfx.text(cv.surf, t, f"This station: {ip}", (inner.x, y + s(420)), "md", c["text2"])
-            cv.button("skip", (inner.x, by, s(300), s(110)), "Later",
-                      lambda: app.finish_wizard(self), "ghost")
-            cv.button("next", (inner.right - s(340), by, s(340), s(110)), "Start",
-                      lambda: setattr(self, "step", 1), "primary", icon="chevron")
-        elif self.step == 1:
-            gfx.text(cv.surf, t, "Network share", (inner.x, y + s(40)), "xl", c["text"],
+            gfx.text(cv.surf, t, "THIS STATION", (inner.x, y + s(340)), "xs", c["text3"],
                      "semibold")
-            self.form.rows(cv, inner.x, y + s(140), inner.w, prefix="w:")
+            gfx.text(cv.surf, t, f"{ip}  ·  ingest.local", (inner.x, y + s(380)), "md",
+                     c["text"], "medium")
+            cv.button("skip", prev_rect, "Later", lambda: app.finish_wizard(self), "secondary")
+            cv.button("next", next_rect, "Start", lambda: self._go(app, 1), "primary",
+                      icon="chevron")
+        elif step == 1:
+            gfx.text(cv.surf, t, "Network share", (inner.x, y), "xl", c["text"], "semibold")
+            self.form.grid(cv, inner.x, y + s(110), inner.w, prefix="w:")
             ok = bool(self.form.draft.get("server") and self.form.draft.get("path"))
-            cv.button("next", (inner.right - s(340), by, s(340), s(110)), "Next",
-                      lambda: (setattr(self, "step", 2), self.form.run_test(app)), "primary",
+            cv.button("prev", prev_rect, "Back", lambda: self._go(app, 0), "secondary",
+                      icon="back")
+            cv.button("next", next_rect, "Next",
+                      lambda: (self._go(app, 2), self.form.run_test(app)), "primary",
                       icon="chevron", enabled=ok)
-            cv.button("prev", (inner.x, by, s(300), s(110)), "Back",
-                      lambda: setattr(self, "step", 0), "ghost", icon="back")
-        elif self.step == 2:
-            gfx.text(cv.surf, t, "Connection test", (inner.x, y + s(40)), "xl", c["text"],
-                     "semibold")
+        elif step == 2:
+            gfx.text(cv.surf, t, "Connection test", (inner.x, y), "xl", c["text"], "semibold")
             d = self.form.draft
             gfx.text(cv.surf, t, f"{d.get('type', '').upper()} · {d.get('server')} · "
-                     f"{d.get('path')}", (inner.x, y + s(130)), "md", c["text2"],
-                     max_w=inner.w)
-            self.form.test_line(cv, inner.x, y + s(220), inner.w)
-            online = (self.form.test or {}).get("state") == "online"
+                     f"{d.get('path')}", (inner.x, y + s(90)), "md", c["text2"], max_w=inner.w)
+            area = pygame.Rect(inner.x, y + s(160), inner.w, by - y - s(200))
+            test = self.form.test or {}
+            online = test.get("state") == "online"
+            if self.form.testing or not self.form.test:
+                spinner(cv, (area.x + s(36), area.centery - s(30)), s(26), c["accent"])
+                gfx.text(cv.surf, t, "Testing the connection…",
+                         (area.x + s(96), area.centery - s(30)), "lg", c["text2"], "semibold",
+                         "midleft")
+            elif online:
+                status_block(cv, area, "ok", "check", "Connected",
+                             f"{test.get('protocol', '')} · {human(test.get('free'))} free")
+            else:
+                status_block(cv, area, "err", "warning", "Cannot connect",
+                             (test.get("reason") or "failed")[:1].upper()
+                             + (test.get("reason") or "failed")[1:],
+                             "Check the server, the share name and the credentials")
+            if self.form.test and not self.form.testing and not self._focused_result:
+                # once the result is in: Next if it worked, Test again if not
+                self._focused_result = True
+                app.focus[id(self)] = self.default_focus
+            cv.button("prev", prev_rect, "Back", lambda: self._go(app, 1), "secondary",
+                      icon="back")
             cv.button("retest", (inner.x + s(330), by, s(380), s(110)), "Test again",
-                      lambda: self.form.run_test(app), "secondary", icon="refresh",
-                      enabled=not self.form.testing)
-            cv.button("prev", (inner.x, by, s(300), s(110)), "Back",
-                      lambda: setattr(self, "step", 1), "ghost", icon="back")
-            cv.button("next", (inner.right - s(340), by, s(340), s(110)), "Next",
-                      lambda: self.form.save(app, lambda: setattr(self, "step", 3)), "primary",
+                      lambda: (self.form.run_test(app), setattr(self, "_focused_result", False)),
+                      "secondary", icon="refresh", enabled=not self.form.testing)
+            cv.button("next", next_rect, "Next",
+                      lambda: self.form.save(app, lambda: self._go(app, 3)), "primary",
                       icon="chevron", enabled=online)
-        elif self.step == 3:
-            gfx.text(cv.surf, t, "Destination folder", (inner.x, y + s(40)), "xl", c["text"],
+        elif step == 3:
+            gfx.text(cv.surf, t, "Destination folder", (inner.x, y), "xl", c["text"],
                      "semibold")
-            sub = self.form.draft.get("subdir") or ""
             wrap(cv, "Imports are copied into this folder of the share, one sub-folder per "
-                 "import.", pygame.Rect(inner.x, y + s(130), inner.w, s(120)), "md", c["text2"], 2)
-            cv.row("w:folder", (inner.x, y + s(260), inner.w, s(110)), "Folder",
+                 "import.", pygame.Rect(inner.x, y + s(90), inner.w, s(120)), "md", c["text2"], 2)
+            sub = (self.form.draft.get("subdir") or "").strip("/")
+            cv.row("w:folder", (inner.x, y + s(190), inner.w, s(104)), "Folder",
                    "/" + sub if sub else "share root",
                    lambda: app.push(FolderBrowser(sub, lambda p: (
                        self.form.draft.__setitem__("subdir", p), self.form.save(app)))),
                    icon="folder")
-            cv.button("prev", (inner.x, by, s(300), s(110)), "Back",
-                      lambda: setattr(self, "step", 2), "ghost", icon="back")
-            cv.button("next", (inner.right - s(340), by, s(340), s(110)), "Next",
-                      lambda: setattr(self, "step", 4), "primary", icon="chevron")
+            gfx.text(cv.surf, t, "EXAMPLE", (inner.x + s(28), y + s(350)), "xs", c["text3"],
+                     "semibold")
+            wrap(cv, self._example(app), pygame.Rect(inner.x + s(28), y + s(392),
+                                                      inner.w - s(56), s(100)),
+                 "md", c["text"], 2, "medium")
+            cv.button("prev", prev_rect, "Back", lambda: self._go(app, 2), "secondary",
+                      icon="back")
+            cv.button("next", next_rect, "Next", lambda: self._go(app, 4), "primary",
+                      icon="chevron")
         else:
             ip = (app.state or {}).get("ip") or "–"
-            gfx.text(cv.surf, t, "All set", (inner.x, y + s(40)), "xxl", c["text"], "bold")
+            gfx.text(cv.surf, t, "All set", (inner.x, y), "xxl", c["text"], "bold")
             wrap(cv, "Insert a card or connect a camera to start. From a phone or a computer "
                  "you can follow the imports at this address:",
-                 pygame.Rect(inner.x, y + s(170), inner.w - s(420), s(200)), "lg", c["text2"], 3)
-            gfx.text(cv.surf, t, f"http://{ip}", (inner.x, y + s(380)), "xl", c["accent"],
+                 pygame.Rect(inner.x, y + s(140), inner.w - s(440), s(200)), "lg", c["text2"], 3)
+            gfx.text(cv.surf, t, f"http://{ip}", (inner.x, y + s(340)), "xl", c["accent"],
                      "semibold")
-            gfx.text(cv.surf, t, "or http://ingest.local", (inner.x, y + s(470)), "md",
+            gfx.text(cv.surf, t, "or http://ingest.local", (inner.x, y + s(430)), "md",
                      c["text2"])
-            gfx.qr(cv.surf, f"http://{ip}", (inner.right - s(360), y + s(150), s(360), s(360)),
+            gfx.qr(cv.surf, f"http://{ip}", (inner.right - s(360), y + s(110), s(360), s(360)),
                    (17, 24, 39), (255, 255, 255))
-            cv.button("next", (inner.right - s(340), by, s(340), s(110)), "Finish",
-                      lambda: app.finish_wizard(self), "primary", icon="check")
+            cv.button("prev", prev_rect, "Back", lambda: self._go(app, 3), "secondary",
+                      icon="back")
+            cv.button("next", next_rect, "Finish", lambda: app.finish_wizard(self), "primary",
+                      icon="check")
+
+    def _example(self, app) -> str:
+        """Full path of an import, e.g. "nas › Photos › 2026-10-16_2124_EOS_R6"."""
+        from ingest.daemon import naming
+        d = self.form.draft
+        try:
+            folder = naming.folder_name(dt.datetime.now(), "EOS_R6",
+                                        app.settings.get("folder_schema", naming.DEFAULT_SCHEMA))
+        except Exception:  # noqa: BLE001 - preview only
+            folder = "…"
+        parts = [d.get("server", ""), (d.get("path") or "").strip("/"),
+                 (d.get("subdir") or "").strip("/"), folder]
+        return " › ".join(p for p in parts if p)
 
 
 class History(Screen):

@@ -279,21 +279,27 @@ class Home(Screen):
 
     def _status_block(self, cv: Canvas, b: pygame.Rect, tone: str, icon: str, title: str,
                       line1: str = "", line2: str = "") -> None:
-        """The one layout for a tile's outcome (done, nothing new, ejected,
-        errors): icon in a soft circle, title in the tone's colour, a detail
-        line (up to 2 lines) and a quieter hint line."""
-        t, c, s = cv.t, cv.c, cv.s
-        x, w = b.x + s(96), b.w - s(100)
-        cy = b.y + b.h // 2 - s(30)
-        gfx.circle(cv.surf, (b.x + s(36), cy), s(36), c[f"{tone}_soft"])
-        gfx.icon(cv.surf, icon, (b.x + s(36), cy), s(44), c[tone])
-        gfx.text(cv.surf, t, title, (x, cy), "lg", c[tone], "semibold", "midleft",
-                 max_w=w, min_size="md")
-        y = cy + s(30)
-        if line1:
-            y += wrap(cv, line1, pygame.Rect(x, y, w, s(100)), "md", c["text2"], 2) + s(4)
-        if line2:
-            gfx.text(cv.surf, t, line2, (x, y), "sm", c["text3"], max_w=w, min_size="xs")
+        status_block(cv, b, tone, icon, title, line1, line2)
+
+
+def status_block(cv: Canvas, b: pygame.Rect, tone: str, icon: str, title: str,
+                 line1: str = "", line2: str = "") -> None:
+    """The one layout for an outcome (a tile's done, nothing new, ejected,
+    errors; the wizard's connection test): icon in a soft circle, title in
+    the tone's colour, a detail line (up to 2 lines) and a quieter hint
+    line. Vertically centred in `b`."""
+    t, c, s = cv.t, cv.c, cv.s
+    x, w = b.x + s(96), b.w - s(100)
+    cy = b.y + b.h // 2 - s(30)
+    gfx.circle(cv.surf, (b.x + s(36), cy), s(36), c[f"{tone}_soft"])
+    gfx.icon(cv.surf, icon, (b.x + s(36), cy), s(44), c[tone])
+    gfx.text(cv.surf, t, title, (x, cy), "lg", c[tone], "semibold", "midleft",
+             max_w=w, min_size="md")
+    y = cy + s(30)
+    if line1:
+        y += wrap(cv, line1, pygame.Rect(x, y, w, s(100)), "md", c["text2"], 2) + s(4)
+    if line2:
+        gfx.text(cv.surf, t, line2, (x, y), "sm", c["text3"], max_w=w, min_size="xs")
 
 
 def self_share_name(share: dict) -> str:

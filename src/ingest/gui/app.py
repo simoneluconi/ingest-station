@@ -160,6 +160,8 @@ class App:
                 self.open_settings()
             elif ln == "screen:history":
                 self.open_history()
+            elif ln == "screen:wizard":
+                self.push(Wizard(self))
             elif ln == "offline" and self.state:   # preview: share offline until the next event
                 self.state["share"] = {**self.state.get("share", {}), "state": "offline",
                                        "reason": "host unreachable"}
