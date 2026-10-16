@@ -64,7 +64,29 @@ Phase 3 (GUI on the monitor) and the phase 2 daemon.
 - Dark halo around rounded corners, icons and the focus ring
   (anti-aliasing against transparent black).
 
+- NFS: a protocol version the server accepts but whose reads fail (seen
+  with NFS 4.2 on NFS-Ganesha 4.3: hash imports succeeded, full verification
+  paused at the first read-back) is now skipped while negotiating: each
+  mount is checked by writing a small file and reading it back directly from
+  the server. The daemon renegotiates at start instead of reusing an old
+  mount.
+- NFS: ports 2049 and 111 are checked before mounting (3 s at most):
+  "NFS 3 is not offered by ...", "... is not reachable" and unknown names
+  are reported in seconds instead of 25-60 s of mount retries.
+- Phones over MTP: the scan walked the whole phone (apps, caches, music) and
+  stopped at the first folder Android refuses to list. Cameras and phones are
+  now scanned in their media folders only (DCIM, Pictures, Movies, PRIVATE,
+  AVCHD, MP_ROOT); unreadable folders are skipped. Phones show the model
+  they report ("Samsung SM-S938B") and a phone icon.
+- After an import, the source screen showed the summary from before it; it
+  now shows the outcome of the last import.
+
 ### Measured on the Wyse 3040 (phase 3)
+- Samsung Galaxy S25 Ultra over MTP (USB 3): 3017 photos and videos (80 GB)
+  listed in 25 s.
+- NFS 4.1 to a test server (NFS-Ganesha in Docker on a Windows PC): 501
+  files, 495 MB in 17-20 s with hash verification, 32 s with full
+  verification; checksums confirmed on the server with `xxhsum`.
 - Canon EOS R6 over USB-C (PTP, 5 Gbit/s link): 41 files, 943.7 MB in 39 s
   (24 MB/s) to an SMB share; the files are recognised as imported at the
   next connection.
