@@ -109,3 +109,78 @@ def test_import_from_camera_and_cross_recognition(tmp_path):
     for path, data in list(files.items())[2:]:
         rel = path.split("/", 2)[2]
         assert (share / "Canon" / rel).read_bytes() == data
+
+
+def test_walk_reads_only_media_folders(monkeypatch):
+    """A phone: photos in DCIM and Pictures; apps, caches and music elsewhere;
+    Android/data cannot be listed. Only the photos are read, nothing fails."""
+    folders = {
+        "/store_1": ["Android", "DCIM", "Download", "Music", "Pictures"],
+        "/store_1/DCIM": ["Camera", ".thumbnails"],
+        "/store_1/DCIM/Camera": [],
+        "/store_1/DCIM/.thumbnails": [],
+        "/store_1/Pictures": ["Screenshots", "Locked"],
+        "/store_1/Pictures/Screenshots": [],
+        "/store_1/Pictures/Locked": None,          # cannot be listed
+        "/store_1/Android": ["data"],
+        "/store_1/Android/data": None,
+    }
+    files = {
+        "/store_1/DCIM/Camera": ["IMG_1.jpg", "VID_2.mp4", ".pending-IMG_3.jpg"],
+        "/store_1/DCIM/.thumbnails": ["t1.jpg"],
+        "/store_1/Pictures/Screenshots": ["shot.png", "broken.png"],
+        "/store_1/Music": ["song.mp3"],
+        "/store_1/Download": ["file.pdf"],
+    }
+    listed = []
+
+    def fake_list(self, fn, folder):
+        listed.append(folder)
+        table = folders if fn == "folders" else files
+        if table.get(folder, []) is None:
+            raise ptp.PTPError(f"list {folder}: Unspecified error (-1)")
+        return list(table.get(folder, []))
+
+    class FakeLib:
+        gp_camera_folder_list_folders = "folders"
+        gp_camera_folder_list_files = "files"
+
+        @staticmethod
+        def gp_camera_file_get_info(cam, folder, name, info_ref, ctx):
+            if name == b"broken.png":
+                return -1
+            info = info_ref._obj
+            info.file.fields = ptp.GP_FILE_INFO_SIZE | ptp.GP_FILE_INFO_MTIME
+            info.file.size, info.file.mtime = 1000, 1_700_000_000
+            return ptp.GP_OK
+    monkeypatch.setattr(ptp, "lib", lambda: FakeLib)
+    monkeypatch.setattr(ptp.Camera, "_list", fake_list)
+    cam = ptp.Camera.__new__(ptp.Camera)
+    cam.lock, cam.cam, cam.ctx = threading.RLock(), None, None
+    got = sorted(f"{f.folder}/{f.name}" for f in cam.walk("/store_1"))
+    assert got == ["/store_1/DCIM/Camera/IMG_1.jpg", "/store_1/DCIM/Camera/VID_2.mp4",
+                   "/store_1/Pictures/Screenshots/shot.png"]
+    # apps, music and downloads are never listed
+    assert not any(f.startswith(("/store_1/Android", "/store_1/Music", "/store_1/Download"))
+                   for f in listed)
+    assert ptp.is_media_root("DCIM") and ptp.is_media_root("pictures")
+    assert not ptp.is_media_root("Android")
+
+
+def test_device_name():
+    phone = ("Manufacturer: Samsung Electronics Co., Ltd.\nModel: SM-S928B\n"
+             "  Version: S928BXXS4AXK1\n  Serial Number: R5CY50W3LTW\n")
+    # cameras keep libgphoto2's name; phones get the reported manufacturer and model
+    assert ptp.device_name("Canon EOS R6", phone) == "Canon EOS R6"
+    assert ptp.device_name("Samsung Galaxy models (MTP)", phone) == "Samsung SM-S928B"
+    assert ptp.device_name("Google Pixel (MTP)", "Manufacturer: Google\nModel: Pixel 8\n") == \
+        "Google Pixel 8"
+    # a model that already starts with the maker, or no summary at all
+    assert ptp.device_name("Generic MTP device", "Manufacturer: OnePlus\nModel: OnePlus 12\n") == \
+        "OnePlus 12"
+    assert ptp.device_name("Samsung Galaxy models (MTP)", "") == "Samsung Galaxy"
+
+
+def test_is_phone():
+    assert ptp.is_phone("Samsung Galaxy models (MTP)") and ptp.is_phone("Generic MTP device")
+    assert not ptp.is_phone("Canon EOS R6") and not ptp.is_phone("Nikon DSC Z 6II")

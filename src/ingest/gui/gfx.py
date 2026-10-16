@@ -243,6 +243,9 @@ def _draw_icon(d: pygame.Surface, name: str, s: float, col, lw: int) -> None:
         pts = [(8, 7), (9.5, 4), (14.5, 4), (16, 7)]
         pygame.draw.lines(d, col, False, [(x * s, y * s) for x, y in pts], lw)
         C(12, 13.5, 4)
+    elif name == "phone":
+        R(6.5, 2.5, 11, 19, 2.5)
+        L((10.5, 18.5), (13.5, 18.5))
     elif name == "check":
         L((5, 12.5), (10, 17.5), (19.5, 7))
     elif name == "cross":

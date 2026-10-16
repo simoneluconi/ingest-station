@@ -213,4 +213,13 @@ def test_port_state():
     assert share.port_state("127.0.0.1", port) == "open"
     srv.close()
     assert share.port_state("127.0.0.1", port, timeout=1) in ("closed", "silent")
-    assert share.port_state("no-such-host.invalid", 2049) == "unknown-host"
+
+
+def test_port_state_unknown_host(monkeypatch):
+    # name resolution is simulated: the PC's DNS must not decide the result
+    import socket
+
+    def no_such_host(*a, **k):
+        raise socket.gaierror(-2, "Name or service not known")
+    monkeypatch.setattr(socket, "create_connection", no_such_host)
+    assert share.port_state("nas-that-does-not-exist", 2049) == "unknown-host"

@@ -50,7 +50,7 @@ def when(ts) -> str:
 
 def source_icon(src: dict) -> str:
     if src.get("kind") == "camera":
-        return "camera"
+        return "phone" if src.get("phone") else "camera"
     name = (src.get("name", "") + " " + src.get("model", "")).upper()
     if any(k in name for k in ("SSD", "HDD", "DISK", "PORTABLE", "EXPANSION", "PASSPORT")) \
             and src.get("capacity", 0) > 300e9:

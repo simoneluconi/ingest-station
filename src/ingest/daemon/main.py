@@ -72,7 +72,8 @@ class Source:
             speed, slow = devices.usb_link(self.cam.get("sysdir"))
             return {"name": name, "model": self.cam["model"], "vendor": self.cam["vendor"],
                     "serial": self.cam["serial"], "capacity": st.capacity if st else 0,
-                    "fs": "camera", "label": "", "usb_speed": speed, "usb_slow": slow}
+                    "fs": "camera", "label": "", "usb_speed": speed, "usb_slow": slow,
+                    "phone": bool(self.cam.get("phone"))}
         d = self.disk
         return {"name": devices.describe(d) if d else "", "model": d.model if d else "",
                 "vendor": d.vendor if d else "", "serial": d.serial if d else "",
@@ -323,6 +324,9 @@ class Daemon:
             cam = await asyncio.to_thread(ptp.Camera, model, ucam.port)
             self.cameras[key] = cam
             storages = await asyncio.to_thread(cam.storages)
+            name = ptp.device_name(model, await asyncio.to_thread(cam.summary))
+            log.info("camera %s: %s (libgphoto2: %s), %d storage(s)", key, name, model,
+                     len(storages))
         except Exception as e:
             placeholder.status, placeholder.message = "error", str(e)
             # try again on the next rescan (the user may unlock a phone)
@@ -334,9 +338,9 @@ class Daemon:
         for n, st in enumerate(storages):
             sid = f"{key}:{n}"
             src = Source(id=sid, slot=key, kind="camera",
-                         cam={"model": model, "vendor": ucam.vendor, "serial": ucam.serial,
+                         cam={"model": name, "vendor": ucam.vendor, "serial": ucam.serial,
                               "storage": st, "n": n, "count": len(storages),
-                              "sysdir": ucam.sysdir})
+                              "sysdir": ucam.sysdir, "phone": ptp.is_phone(model)})
             self.sources[sid] = src
             src.task = asyncio.create_task(self._prepare_camera(src, cam))
         self.beeper.play("start")
@@ -347,6 +351,7 @@ class Daemon:
             src.status = "scanning"
             self.changed()
             st = src.cam["storage"]
+            t0 = time.monotonic()
             files = await asyncio.to_thread(cam.walk, st.basedir, src.cancel)
             base = st.basedir.rstrip("/")
             items = []
@@ -361,6 +366,8 @@ class Daemon:
             src.scan = await asyncio.to_thread(scanner.scan_items, items, self.index,
                                                src.cancel, naming.dcim_brand(dcim))
             src.status, src.message = "ready", ""
+            log.info("source %s ready: %d files, %d new (scan %.1f s)", src.id,
+                     len(src.scan.files), src.scan.new_files, time.monotonic() - t0)
             self.changed()
             await self._maybe_auto_import(src)
         except asyncio.CancelledError:

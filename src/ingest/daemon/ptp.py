@@ -15,11 +15,22 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import glob
+import logging
 import os
 import threading
 from dataclasses import dataclass
 
 from ingest.common import sysfs
+
+log = logging.getLogger("ingestd")
+
+# Top-level folders of a camera or phone storage that hold photos and videos.
+# Everything else is skipped: a phone has hundreds of thousands of other
+# files (apps, caches, music) and Android refuses to list some of them
+# (Android/data). DCIM: cameras and phone cameras; PRIVATE, AVCHD, MP_ROOT:
+# video folders of Sony, Panasonic and others; Pictures, Movies: phones
+# (screenshots, edited photos, screen recordings).
+MEDIA_ROOTS = {"dcim", "private", "avchd", "mp_root", "pictures", "movies"}
 
 GP_OK = 0
 GP_ERROR_NOT_SUPPORTED = -6
@@ -35,6 +46,10 @@ class PTPError(Exception):
 
 class NotSupported(PTPError):
     pass
+
+
+class CameraText(ctypes.Structure):
+    _fields_ = [("text", ctypes.c_char * (32 * 1024))]
 
 
 class CameraStorageInformation(ctypes.Structure):
@@ -112,6 +127,7 @@ def lib():
                 "gp_camera_folder_list_files": [vp, cp, vp, vp],
                 "gp_camera_folder_list_folders": [vp, cp, vp, vp],
                 "gp_camera_file_get_info": [vp, cp, cp, ctypes.POINTER(CameraFileInfo), vp],
+                "gp_camera_get_summary": [vp, ctypes.POINTER(CameraText), vp],
                 "gp_camera_file_read": [vp, cp, cp, ip, ctypes.c_uint64, ctypes.c_void_p,
                                         ctypes.POINTER(ctypes.c_uint64), vp],
                 "gp_abilities_list_new": [ctypes.POINTER(vp)], "gp_abilities_list_free": [vp],
@@ -265,6 +281,17 @@ class Camera:
                 lib().gp_camera_unref(self.cam)
                 self.cam = ctypes.c_void_p()
 
+    def summary(self) -> str:
+        """The device's own description (manufacturer, model, version...)."""
+        text = CameraText()
+        with self.lock:
+            try:
+                _check(lib().gp_camera_get_summary(self.cam, ctypes.byref(text), self.ctx),
+                       "summary")
+            except PTPError:
+                return ""
+        return sysfs.decode(text.text)
+
     def storages(self) -> list[Storage]:
         g = lib()
         with self.lock:
@@ -289,26 +316,44 @@ class Camera:
         return [name for name, _ in lst.items()]
 
     def walk(self, basedir: str, cancel: threading.Event | None = None) -> list[CamFile]:
+        """Photo and video files of a storage: only the MEDIA_ROOTS folders
+        at its top level, no hidden folders. A folder or file that cannot be
+        read is skipped (and logged), it does not end the scan."""
         g = lib()
         out: list[CamFile] = []
+        root = basedir.rstrip("/") or "/"
         with self.lock:
-            stack = [basedir.rstrip("/") or "/"]
+            stack = [f"{root.rstrip('/')}/{d}" for d in sorted(self._list_quiet(
+                g.gp_camera_folder_list_folders, root), reverse=True) if is_media_root(d)]
             while stack:
                 if cancel is not None and cancel.is_set():
                     break
                 folder = stack.pop()
-                for sub in sorted(self._list(g.gp_camera_folder_list_folders, folder),
+                for sub in sorted(self._list_quiet(g.gp_camera_folder_list_folders, folder),
                                   reverse=True):
-                    stack.append(f"{folder.rstrip('/')}/{sub}")
-                for name in sorted(self._list(g.gp_camera_folder_list_files, folder)):
+                    if not sub.startswith("."):
+                        stack.append(f"{folder.rstrip('/')}/{sub}")
+                for name in sorted(self._list_quiet(g.gp_camera_folder_list_files, folder)):
+                    if name.startswith("."):
+                        continue
                     info = CameraFileInfo()
-                    _check(g.gp_camera_file_get_info(self.cam, folder.encode(), name.encode(),
-                                                     ctypes.byref(info), self.ctx), name)
+                    rc = g.gp_camera_file_get_info(self.cam, folder.encode(), name.encode(),
+                                                   ctypes.byref(info), self.ctx)
+                    if rc < GP_OK:
+                        log.warning("camera: skipped %s/%s (%s)", folder, name, rc)
+                        continue
                     f = info.file
                     out.append(CamFile(folder, name,
                                        f.size if f.fields & GP_FILE_INFO_SIZE else 0,
                                        float(f.mtime) if f.fields & GP_FILE_INFO_MTIME else 0.0))
         return out
+
+    def _list_quiet(self, fn, folder: str) -> list[str]:
+        try:
+            return self._list(fn, folder)
+        except PTPError as e:
+            log.warning("camera: skipped %s", e)
+            return []
 
     def read(self, folder: str, name: str, offset: int, buf) -> int:
         """Partial read straight into `buf` (writable bytearray/memoryview)."""
@@ -321,6 +366,35 @@ class Camera:
                                          GP_FILE_TYPE_NORMAL, offset, cbuf,
                                          ctypes.byref(size), self.ctx), f"read {name}")
         return size.value
+
+
+def is_media_root(name: str) -> bool:
+    return name.lower() in MEDIA_ROOTS
+
+
+def is_phone(gp_model: str) -> bool:
+    """libgphoto2 names phones by their MTP driver ("... (MTP)")."""
+    low = gp_model.lower()
+    return "(mtp)" in low or "mtp device" in low
+
+
+def device_name(gp_model: str, summary: str) -> str:
+    """A readable name. libgphoto2 names cameras well ("Canon EOS R6") but
+    phones by driver ("Samsung Galaxy models (MTP)"): for those, the
+    manufacturer and model the device reports ("Samsung SM-S928B")."""
+    low = gp_model.lower()
+    if not ("models" in low or "(mtp)" in low or "mtp device" in low):
+        return gp_model
+    fields = {}
+    for line in summary.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if sep and key in ("Manufacturer", "Model") and key not in fields:
+            fields[key] = value.strip()
+    maker = (fields.get("Manufacturer") or gp_model).split()[0].strip(",").title()
+    model = fields.get("Model", "")
+    if not model:
+        return gp_model.replace(" models", "").replace(" (MTP)", "").strip() or gp_model
+    return model if model.lower().startswith(maker.lower()) else f"{maker} {model}"
 
 
 class CameraStream:
